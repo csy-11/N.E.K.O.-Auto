@@ -1,0 +1,10 @@
+# 本地部署产物(含 API Key, 切勿提交)
+.env
+.env.*
+!.env.example
+
+neko-home/
+logs/
+
+# 本地部署目录
+neko-deploy/
