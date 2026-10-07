@@ -3,7 +3,7 @@
 N.E.K.O. 服务的**自动部署方案**(含小白友好一键脚本)。
 
 这套仓库把 N.E.K.O. 官方 `docker/` 目录的内容整理出来,并提供一个
-**`deploy.sh` 全自动部署脚本**:通过 curl 拉取本仓库文件 → 交互式配置 →
+**`install.sh` 全自动部署脚本**:通过 curl 拉取本仓库文件 → 交互式配置 →
 安装 Docker/ZRAM/CrowdSec/看门狗 → 拉起服务。适合低配云服务器(Ubuntu 系)。
 
 > 本仓库为 `csy-11` 维护的个人/社区版。配置项与运行细节以官方
@@ -15,7 +15,8 @@ N.E.K.O. 服务的**自动部署方案**(含小白友好一键脚本)。
 
 ```
 docker/ 方案(仓库根)
-├── deploy.sh             # 全自动部署脚本(一键)
+├── install.sh            # 全自动部署脚本(一键, 推荐)
+├── deploy.sh             # 兼容转发器(旧名, 自动转 install.sh)
 ├── docker-compose.yml    # Docker Compose 主服务配置
 ├── env.template          # 环境变量模板(复制为 .env 使用)
 ├── preflight.sh          # 部署前数据目录预检(建目录/修属主)
@@ -41,20 +42,21 @@ docker/ 方案(仓库根)
 ### 公有方式(仓库公开时用这条)
 
 ```bash
-bash <(curl -L https://raw.githubusercontent.com/csy-11/N.E.K.O.-Auto/main/deploy.sh)
+bash <(curl -L https://raw.githubusercontent.com/csy-11/N.E.K.O.-Auto/main/install.sh)
+# 旧命令 deploy.sh 仍可用: bash <(curl -L .../main/deploy.sh)
 ```
 
 ### 私有仓库(带 Personal Access Token)
 
 私有仓库无法从 `raw.githubusercontent.com` 匿名拉取,需要用 API 把
-`deploy.sh` 取下来再执行:
+`install.sh` 取下来再执行:
 
 ```bash
 export GITHUB_TOKEN=ghp_你的token
 curl -L -H "Authorization: Bearer $GITHUB_TOKEN" \
-  "https://api.github.com/repos/csy-11/N.E.K.O.-Auto/contents/deploy.sh?ref=main" \
-  | python3 -c "import sys,json,base64;open('deploy.sh','w').write(base64.b64decode(json.load(sys.stdin)['content']).decode())"
-sudo bash deploy.sh
+  "https://api.github.com/repos/csy-11/N.E.K.O.-Auto/contents/install.sh?ref=main" \
+  | python3 -c "import sys,json,base64;open('install.sh','w').write(base64.b64decode(json.load(sys.stdin)['content']).decode())"
+sudo bash install.sh
 ```
 
 > token 需要 `repo` 权限,且**只能用于你自己的账号**。用完请吊销。
@@ -64,7 +66,7 @@ sudo bash deploy.sh
 ```bash
 git clone git@github.com:csy-11/N.E.K.O.-Auto.git
 cd N.E.K.O.-Auto
-sudo bash deploy.sh
+sudo bash install.sh
 ```
 
 ---
@@ -167,4 +169,4 @@ sudo rm -rf /opt/neko
 ## LICENSE
 
 本仓库内容随官方 `Project-N-E-K-O/N.E.K.O` 一并开源(以官方声明为准)。
-`deploy.sh` 由本仓作者(csy-11)编写。
+`install.sh`(及其旧名转发器 `deploy.sh`)由本仓作者(csy-11)编写。
