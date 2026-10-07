@@ -27,6 +27,23 @@ BRANCH="${BRANCH:-main}"
 API_BASE="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}"
 
+# 下载重试与超时(可通过环境变量覆盖)
+FETCH_RETRIES="${FETCH_RETRIES:-3}"          # 每个源的最大尝试次数
+FETCH_CONNECT_TIMEOUT="${FETCH_CONNECT_TIMEOUT:-10}"  # 连接超时(秒)
+FETCH_MAX_TIME="${FETCH_MAX_TIME:-60}"       # 单次请求总超时(秒)
+FETCH_BACKOFF="${FETCH_BACKOFF:-2}"          # 重试退避基数(秒), 第 n 次等待 n*base
+
+# raw 文件的多源前缀(按优先级; 空串表示官方直连)。
+# 已实测可用: 官方直连 / gh-proxy.com / ghproxy.net / jsDelivr。
+# 用法: url = "<前缀><RAW_BASE>/<相对路径>"; jsDelivr 形式特殊, 单独处理。
+RAW_MIRRORS=(
+  ""                                                   # 官方直连
+  "https://gh-proxy.com/"                              # gh-proxy 加速
+  "https://ghproxy.net/"                               # ghproxy.net 加速
+)
+# jsDelivr CDN(格式: https://cdn.jsdelivr.net/gh/<owner>/<repo>@<branch>/<path>)
+JSDELIVR_BASE="https://cdn.jsdelivr.net/gh/${REPO_OWNER}/${REPO_NAME}@${BRANCH}"
+
 # 需要从仓库拉取的文件(相对仓库根;目录保留)。
 NEED_FILES=(
   docker-compose.yml
@@ -236,7 +253,10 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
-# 从仓库拉取文件(API 优先, 回退 raw; 支持私有仓库 token)
+# 从仓库拉取文件
+#   统一下载函数: 多源回退 + 逐源重试 + 连接/总超时
+#   源顺序(GitHub API 仅带 token 时优先, 支持私有仓库):
+#     GitHub API -> 官方 raw -> gh-proxy -> ghproxy.net -> jsDelivr
 # -----------------------------------------------------------------------------
 auth_headers() {
   if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -244,29 +264,78 @@ auth_headers() {
   fi
 }
 
-fetch_file() {
-  local rel="$1" dest="$2" tmp
-  tmp="$(mktemp)"
-  local api_hdr=() h
-  while IFS= read -r h; do [ -n "$h" ] && api_hdr+=(-H "$h"); done < <(auth_headers)
-
-  if curl -fsSL "${api_hdr[@]}" "${API_BASE}/${rel}?ref=${BRANCH}" -o "$tmp" 2>/dev/null; then
-    if command -v python3 >/dev/null 2>&1 \
-       && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$tmp" 2>/dev/null; then
-      local dl
-      dl="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("download_url",""))' "$tmp")"
-      if [ -n "$dl" ] && curl -fsSL "${api_hdr[@]}" "$dl" -o "$tmp" 2>/dev/null; then
-        mkdir -p "$(dirname -- "$dest")"; cp "$tmp" "$dest"; rm -f "$tmp"; return 0
-      fi
-    else
-      mkdir -p "$(dirname -- "$dest")"; cp "$tmp" "$dest"; rm -f "$tmp"; return 0
-    fi
-  fi
-  # 回退: raw.githubusercontent(仅公有)
-  if [ -z "${GITHUB_TOKEN:-}" ] && curl -fsSL "${RAW_BASE}/${rel}" -o "$tmp" 2>/dev/null; then
-    mkdir -p "$(dirname -- "$dest")"; cp "$tmp" "$dest"; rm -f "$tmp"; return 0
+# 统一下载函数(单次): download_once <url> <dest> [curl 额外参数...]
+# 成功返回 0; 失败返回 1。走临时文件, 避免写坏已有目标文件。
+download_once() {
+  local url="$1" dest="$2"; shift 2
+  local tmp
+  tmp="$(mktemp)" || return 1
+  if curl -fsSL \
+       --connect-timeout "$FETCH_CONNECT_TIMEOUT" \
+       --max-time "$FETCH_MAX_TIME" \
+       --retry 0 \
+       "$@" "$url" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    mkdir -p "$(dirname -- "$dest")"
+    mv -f "$tmp" "$dest"
+    return 0
   fi
   rm -f "$tmp"
+  return 1
+}
+
+# 带重试的单源下载: fetch_from_source <源名> <url> <dest> [curl 额外参数...]
+fetch_from_source() {
+  local name="$1" url="$2" dest="$3"; shift 3
+  local attempt wait
+  for attempt in $(seq 1 "$FETCH_RETRIES"); do
+    if download_once "$url" "$dest" "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -lt "$FETCH_RETRIES" ]; then
+      wait=$(( attempt * FETCH_BACKOFF ))
+      warn "      [$name] 第 $attempt 次失败, ${wait}s 后重试(${attempt}/${FETCH_RETRIES})..."
+      sleep "$wait"
+    fi
+  done
+  return 1
+}
+
+# 统一下载入口: 多源回退 + 逐源重试; 全部失败才返回 1。
+# 成功时把内容写到 $dest。
+fetch_file() {
+  local rel="$1" dest="$2"
+  local prefix name api_hdr=() h
+
+  # 1) 带 token 时优先走 GitHub API(私有仓库唯一可行路径)
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    while IFS= read -r h; do [ -n "$h" ] && api_hdr+=(-H "$h"); done < <(auth_headers)
+    if fetch_from_source "GitHub API" "${API_BASE}/${rel}?ref=${BRANCH}" "$dest" \
+         "${api_hdr[@]}" -H "Accept: application/vnd.github.raw"; then
+      return 0
+    fi
+  else
+    # 2) 无 token: 官方 raw 直连
+    if fetch_from_source "raw.githubusercontent" "${RAW_BASE}/${rel}" "$dest"; then
+      return 0
+    fi
+  fi
+
+  # 3) 各 raw 加速源
+  for prefix in "${RAW_MIRRORS[@]}"; do
+    [ -z "$prefix" ] && continue
+    name="${prefix%/}"
+    if fetch_from_source "$name" "${prefix}${RAW_BASE}/${rel}" "$dest"; then
+      return 0
+    fi
+  done
+
+  # 4) jsDelivr CDN(仅公有仓库)
+  if [ -z "${GITHUB_TOKEN:-}" ]; then
+    if fetch_from_source "jsDelivr" "${JSDELIVR_BASE}/${rel}" "$dest"; then
+      return 0
+    fi
+  fi
+
   return 1
 }
 
@@ -449,13 +518,35 @@ main() {
   mkdir -p "$INSTALL_DIR"
   cd "$INSTALL_DIR"
 
+  info "  开始拉取配置(每个文件都会多源回退 + 重试; 单个失败不影响其他文件)"
   local missing=()
   for f in "${NEED_FILES[@]}"; do
-    printf '  - %s ... ' "$f"
-    if fetch_file "$f" "$INSTALL_DIR/$f"; then ok "OK"; else printf 'FAILED\n'; missing+=("$f"); fi
+    printf '  - %s\n' "$f"
+    # fetch_file 内部已是多源 + 重试, 不会因单次失败而中断
+    if fetch_file "$f" "$INSTALL_DIR/$f"; then
+      ok "    ✅ OK"
+    else
+      err "    ❌ FAILED (所有源均失败)"
+      missing+=("$f")
+    fi
   done
+
   if [ "${#missing[@]}" -gt 0 ]; then
-    die "以下文件拉取失败: ${missing[*]}。若为私有仓库请设置 GITHUB_TOKEN 后重试。"
+    err "❌ 以下文件拉取失败: ${missing[*]}"
+    cat <<EOF
+  提示:
+    1) 脚本已自动尝试多个镜像源(raw / gh-proxy / ghproxy.net / jsDelivr)并各自重试,
+       仍失败通常是本机网络到 GitHub 全线不通。
+    2) 私有仓库请设置 token 后重试:
+         GITHUB_TOKEN=ghp_xxx bash install.sh
+    3) 手动改源: 用环境变量指定仓库/分支, 例如
+         REPO_OWNER=... REPO_NAME=... BRANCH=... bash install.sh
+    4) 提高重试次数与超时后重试:
+         FETCH_RETRIES=5 FETCH_MAX_TIME=120 bash install.sh
+    5) 检查网络: ping -c 3 raw.githubusercontent.com
+${C_R}已成功拉取的文件会保留, 修复后可重新运行本脚本。${C_0}
+EOF
+    exit 1
   fi
 
   info "  进行交互式配置..."
