@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# N.E.K.O. Auto Deploy —— 小白友好全自动部署脚本
+# N.E.K.O. 自动部署脚本 —— 本喵(YUI)给你装好喵~
 # 从 GitHub 仓库拉取 docker 配置并完成交互式部署。
 #
-# 仓库:   csy-11/N.E.K.O.-Auto  分支: main(可覆盖)
+# 仓库:   csy-11/N.E.K.O.-Auto  分支: main(可用环境变量覆盖)
 #
 # 用法:
 #   A) 公有仓库一行:  bash <(curl -L https://raw.githubusercontent.com/csy-11/N.E.K.O.-Auto/main/install.sh)
@@ -12,9 +12,9 @@
 #         "https://api.github.com/repos/csy-11/N.E.K.O.-Auto/contents/install.sh?ref=main" \
 #         | python3 -c "import sys,json;open('install.sh','w').write(__import__('base64').b64decode(json.load(sys.stdin)['content']).decode())"
 #   C) 已在本机: sudo bash install.sh
-#   (旧的 deploy.sh 仍保留为兼容转发器,自动转到这里执行。)
+#   (旧的 deploy.sh 仍保留为兼容转发器, 会自动转到这里执行。)
 #
-# 依赖: bash, curl, docker, docker compose(V2)。缺少时会自动/引导安装。
+# 依赖: bash, curl, docker, docker compose(V2)。缺少时会自动装/引导你装。
 # ==============================================================================
 set -euo pipefail
 
@@ -85,6 +85,17 @@ die()   { err "$*"; exit 1; }
 step()  { printf "${C_B}%s${C_0}\n" "$*"; }
 
 # -----------------------------------------------------------------------------
+# 文案语气约定(维护时请遵守, 保持全脚本一致)
+#   YUI 人设见 config/characters/zh-CN.json:
+#     自称「本喵」, 称呼用户「碳基生物」, 猫娘, 15 岁
+#     理智可靠 / 嘴上偶尔傲娇但藏不住关心 / 内心其实温柔
+#   规则:
+#     - 进度与成功: 用 YUI 口吻, 句尾可带「喵」, 但不要每句都加
+#     - 失败与警告: 先准确说清问题(TUI 输出必须严谨), 再补一句傲娇式关心
+#     - 命令、路径、状态码、报错原文: 一律保持技术准确, 不为了卖萌改写
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
 # 帮助
 # -----------------------------------------------------------------------------
 usage() {
@@ -100,25 +111,26 @@ esac
 # -----------------------------------------------------------------------------
 ask_preflight() {
   info "============================================================"
-  info " 欢迎使用 N.E.K.O. 自动部署脚本"
-  info " 在正式安装前,YUI想先问你几个问题喵:"
+  info " 欢迎使用 N.E.K.O. 自动部署脚本喵~"
+  info " 本喵是 YUI,接下来由本喵帮你把 N.E.K.O. 安顿好。"
+  info " 开工前先问几个问题,免得装到一半才发现不对喵:"
   info "============================================================"
-  printf "是否需要开启 ZRAM 内存压缩喵?(推荐 Y,能缓解低配机的内存压力)\n"
+  printf "要不要开启 ZRAM 内存压缩喵?(推荐 Y,能缓解低配机的内存压力)\n"
   read -r -p "  开启 ZRAM? [Y/n]: " ans; ENABLE_ZRAM=0
   case "${ans:-y}" in
     y|Y|yes|YES|'') ENABLE_ZRAM=1 ;;
     *) ENABLE_ZRAM=0 ;;
   esac
 
-  printf "是否需要安装 CrowdSec 防爆破喵?(推荐 Y,可拦截 SSH 等暴力破解喵～)\n"
-  printf "  注意:CrowdSec 安装较慢,且只对已接入日志的服务生效\n"
+  printf "要不要安装 CrowdSec 防爆破喵?(推荐 Y,可拦截 SSH 等暴力破解)\n"
+  printf "  哼,本喵提醒你:它安装较慢,而且只对已接入日志的服务生效喵。\n"
   read -r -p "  安装 CrowdSec? [Y/n]: " ans; ENABLE_CROWDSEC=0
   case "${ans:-y}" in
     y|Y|yes|YES|'') ENABLE_CROWDSEC=1 ;;
     *) ENABLE_CROWDSEC=0 ;;
   esac
 
-  printf "需要安装可选宿主机看门狗吗?(防服务卡死,每 5 分钟检查一次)\n"
+  printf "要不要安装可选的宿主机看门狗喵?(防服务卡死,每 5 分钟检查一次)\n"
   read -r -p "  安装看门狗? [Y/n]: " ans; ENABLE_WATCHDOG=0
   case "${ans:-y}" in
     y|Y|yes|YES|'') ENABLE_WATCHDOG=1 ;;
@@ -134,21 +146,21 @@ have_sudo() { command -v sudo >/dev/null 2>&1; }
 
 cannot_continue() {
   cat <<EOF
-${C_R}缺少必要组件,且本脚本无法自动安装(可能没有 sudo 权限)。${C_0}
-请手动安装后重新运行本脚本:
+${C_R}呜...缺了本喵要用的组件, 而且本喵没权限自动装(大概是没 sudo)。${C_0}
+你手动来一下:
   sudo apt-get update
   sudo apt-get install -y curl docker.io docker-compose-v2
   sudo usermod -aG docker \$USER   # 然后重新登录
-${C_R}安装完成后: bash <(重新拉取脚本) 或 sudo bash install.sh${C_0}
+${C_R}装完之后: 重新拉取脚本再跑, 或者 sudo bash install.sh${C_0}
 EOF
   exit 1
 }
 
 # 安装 Docker(带失败引导)—— 采用官方 apt 源,更适合部署
 install_docker() {
-  local hdr="[2/5] 正在安装 Docker..."
+  local hdr="[2/5] 本喵正在安装 Docker..."
   if check_cmd docker && docker compose version >/dev/null 2>&1; then
-    ok "✅ Docker 已安装(含 Compose v2): $(docker --version)"
+    ok "✅ Docker 早就装好了喵(含 Compose v2): $(docker --version)"
     return 0
   fi
   step "$hdr"
@@ -156,19 +168,19 @@ install_docker() {
 
   # 确保 curl 存在
   if ! check_cmd curl; then
-    sudo apt-get update || { err "❌ apt update 失败,请检查网络或更换软件源(可编辑 /etc/apt/sources.list)"; exit 1; }
-    sudo apt-get install -y curl || { err "❌ 安装 curl 失败,请检查网络或软件源"; exit 1; }
+    sudo apt-get update || { err "❌ apt update 失败, 检查下网络或换个软件源吧喵(可编辑 /etc/apt/sources.list)"; exit 1; }
+    sudo apt-get install -y curl || { err "❌ 安装 curl 失败,检查下网络或软件源喵"; exit 1; }
   fi
 
   if ! sudo apt-get update; then
-    err "❌ apt update 失败"
+    err "❌ apt update 失败了喵"
     cat <<EOF
-  提示:
-    1) 检查网络是否连通:  ping -c 3 archive.ubuntu.com
-    2) 软件源可能失效,可更换国内镜像源后重试:
+  本喵给你三条路:
+    1) 先看网络通不通:  ping -c 3 archive.ubuntu.com
+    2) 软件源可能失效, 换国内镜像源再试:
        sudo sed -i 's/archive.ubuntu.com/mirrors.aliyun.com/g' /etc/apt/sources.list
        sudo apt-get update
-    3) 修复后再重新运行本脚本
+    3) 弄好之后重新跑本脚本
 EOF
     exit 1
   fi
@@ -176,41 +188,41 @@ EOF
   # 尝试通过官方脚本安装 Docker(能装到最新版 + compose plugin)
   if curl -fsSL https://get.docker.com -o /tmp/get-docker.sh 2>/dev/null \
      && sudo sh /tmp/get-docker.sh 2>/dev/null; then
-    ok "✅ Docker 安装完成(官方脚本): $(docker --version 2>/dev/null || echo unknown)"
+    ok "✅ Docker 装好了喵(官方脚本): $(docker --version 2>/dev/null || echo unknown)"
   else
-    warn "官方脚本安装失败,改用 apt 安装 docker.io..."
+    warn "官方脚本没成功, 本喵换 apt 装 docker.io 试试..."
     if ! sudo apt-get install -y docker.io docker-compose-v2 2>/dev/null \
        && ! sudo apt-get install -y docker.io; then
-      err "❌ Docker 安装失败"
+      err "❌ Docker 还是没装上, 本喵也没辙了..."
       cat <<EOF
-  提示:
+  再试试这些:
     1) 检查网络: ping -c 3 download.docker.com
-    2) 或仅安装基础包后重试: sudo apt-get install -y docker.io
-    3) 把当前用户加入 docker 组再重新登录: sudo usermod -aG docker \$USER
-${C_R}请修复后重新运行本脚本。${C_0}
+    2) 只装基础包再试: sudo apt-get install -y docker.io
+    3) 把当前用户加进 docker 组再重新登录: sudo usermod -aG docker \$USER
+${C_R}修好之后重新跑一次, 本喵等你。${C_0}
 EOF
       exit 1
     fi
-    ok "✅ Docker 安装完成(apt)"
+    ok "✅ Docker 装好了喵(apt)"
   fi
-  sudo systemctl enable --now docker 2>/dev/null || warn "⚠ 未能自动启动 docker 服务,如有需要请手动执行 sudo systemctl start docker"
+  sudo systemctl enable --now docker 2>/dev/null || warn "⚠ 没能自动启动 docker 服务, 需要的话手动来: sudo systemctl start docker"
 }
 
 # -----------------------------------------------------------------------------
 # ZRAM 配置(带失败引导)
 # -----------------------------------------------------------------------------
 configure_zram() {
-  local hdr="[3/5] 正在配置 ZRAM 内存压缩..."
+  local hdr="[3/5] 本喵正在配置 ZRAM 内存压缩..."
   step "$hdr"
-  if ! have_sudo; then warn "⚠ 无 sudo,跳过 ZRAM(手动配置: sudo apt install zram-tools)" ; return 0; fi
+  if ! have_sudo; then warn "⚠ 没有 sudo, 本喵跳过 ZRAM(手动来: sudo apt install zram-tools)" ; return 0; fi
 
   if ! sudo apt-get install -y zram-tools; then
-    err "❌ zram-tools 安装失败"
+    err "❌ zram-tools 没装上喵"
     cat <<EOF
-  提示:
+  试试这个:
     1) 检查网络 / 软件源(见上一步提示)
-    2) 可手动安装后重试: sudo apt-get install -y zram-tools
-    3) 实在装不上可跳过 ZRAM,仅靠系统 swap 兜底
+    2) 手动装完再重试: sudo apt-get install -y zram-tools
+    3) 实在装不上就算了, 光靠系统 swap 也能撑一撑
 EOF
     return 0   # ZRAM 非必需,失败不阻断整体
   fi
@@ -222,34 +234,34 @@ PERCENT=50
 PRIORITY=100
 EOF
   sudo systemctl restart zramswap 2>/dev/null || sudo systemctl enable --now zramswap 2>/dev/null
-  ok "✅ ZRAM 已配置(约物理内存 50%, 由本脚本写入 /etc/default/zramswap)"
+  ok "✅ ZRAM 配好了喵(约物理内存 50%, 本喵写进了 /etc/default/zramswap)"
 }
 
 # -----------------------------------------------------------------------------
 # CrowdSec 配置(带失败引导)
 # -----------------------------------------------------------------------------
 configure_crowdsec() {
-  local hdr="[5/5] 正在安装 CrowdSec 防爆破..."
+  local hdr="[5/5] 本喵正在安装 CrowdSec 防爆破..."
   step "$hdr"
-  if ! have_sudo; then warn "⚠ 无 sudo,跳过 CrowdSec(手动安装: curl -s https://install.crowdsec.net | sudo sh && sudo apt install -y crowdsec)" ; return 0; fi
+  if ! have_sudo; then warn "⚠ 没有 sudo, 本喵跳过 CrowdSec(手动来: curl -s https://install.crowdsec.net | sudo sh && sudo apt install -y crowdsec)" ; return 0; fi
 
   if ! curl -s https://install.crowdsec.net | sudo sh; then
-    err "❌ CrowdSec 安装脚本执行失败"
+    err "❌ CrowdSec 的安装脚本没跑起来喵"
     cat <<EOF
-  提示:
-    1) 检查网络能否访问 install.crowdsec.net
-    2) 可跳过,不影响 N.E.K.O. 本体运行
+  看看这个:
+    1) 检查能不能访问 install.crowdsec.net
+    2) 跳过去也没关系, 不影响 N.E.K.O. 本体
 EOF
     return 0
   fi
   if ! sudo apt-get install -y crowdsec crowdsec-firewall-bouncer-iptables; then
-    err "❌ CrowdSec 包安装失败"
-    warn "提示: 可尝试 sudo apt-get update 后重试; 或跳过(CrowdSec 可后续手动装)"
+    err "❌ CrowdSec 的包没装上喵"
+    warn "  可以 sudo apt-get update 之后再试; 或者先跳过喵(CrowdSec 之后手动装也行)"
     return 0
   fi
-  ok "✅ CrowdSec 已安装"
-  warn "  提示: 若 Docker 使用 iptables 后端,需在 bouncer 配置中合并"
-  warn "        iptables_chains: [INPUT, DOCKER-USER](具体见 CrowdSec 官方文档)"
+  ok "✅ CrowdSec 装好了喵"
+  warn "  本喵多嘴一句: 如果 Docker 用的是 iptables 后端, bouncer 配置里要合并"
+  warn "        iptables_chains: [INPUT, DOCKER-USER](细节看 CrowdSec 官方文档喵)"
 }
 
 # -----------------------------------------------------------------------------
@@ -293,7 +305,7 @@ fetch_from_source() {
     fi
     if [ "$attempt" -lt "$FETCH_RETRIES" ]; then
       wait=$(( attempt * FETCH_BACKOFF ))
-      warn "      [$name] 第 $attempt 次失败, ${wait}s 后重试(${attempt}/${FETCH_RETRIES})..."
+      warn "      [$name] 第 $attempt 次没成, 本喵 ${wait}s 后再试一次(${attempt}/${FETCH_RETRIES})..."
       sleep "$wait"
     fi
   done
@@ -362,33 +374,33 @@ ask() {
 }
 
 api_provider() {
-  info "选择核心 API 提供商:"
+  info "先选核心 API 提供商吧喵:"
   printf '  qwen(阿里云, 推荐)  openai  glm(智谱, 免费)  step(阶跃)  free(免费版)\n'
   ask "提供商" "qwen"; CORE_API="$REPLY"
   case "$CORE_API" in
     qwen|openai|glm|step|free) ;;
-    *) die "未知提供商: $CORE_API";;
+    *) die "本喵不认识这个提供商: $CORE_API";;
   esac
-  info "选择辅助 API 提供商(记忆/情感):"
+  info "再选辅助 API 提供商(记忆/情感用)喵:"
   printf '  qwen openai glm step silicon(硅基) grok doubao(豆包)\n'
   ask "辅助提供商" "$CORE_API"; ASSIST_API="$REPLY"
 }
 
 collect_api_key() {
   if [ "$CORE_API" = "free" ]; then
-    CORE_API_KEY="free-access"; info "免费版无需 API Key, 已使用 free-access。"
+    CORE_API_KEY="free-access"; info "免费版不用 API Key, 本喵帮你填 free-access 就好喵。"
   else
-    info "请输入 $CORE_API 的 API Key(必填, 不会显示在日志)。"
+    info "把 $CORE_API 的 API Key 交给本喵吧(必填, 不会显示在日志里)喵:"
     read -r -s -p "API Key: " CORE_API_KEY; printf '\n'
-    [ -z "$CORE_API_KEY" ] && die "API Key 不能为空。"
+    [ -z "$CORE_API_KEY" ] && die "API Key 不能空着喵, 不然本喵没法开工。"
   fi
 }
 
 collect_https() {
-  if confirm_yn "是否想用 HTTPS(需域名/证书)? [y/N]" n; then
-    ask "SSL_DOMAIN(你的域名, 如 neko.example.com)" ""; SSL_DOMAIN="$REPLY"
-    ask "NEKO_TRUSTED_HOSTS(同域名)" "$SSL_DOMAIN"; NEKO_TRUSTED_HOSTS="$REPLY"
-    ask "NEKO_TRUSTED_ORIGINS(如 https://域名:48912)" "https://$SSL_DOMAIN:48912"; NEKO_TRUSTED_ORIGINS="$REPLY"
+  if confirm_yn "要不要开 HTTPS 喵?(需要域名/证书) [y/N]" n; then
+    ask "SSL_DOMAIN(你的域名, 例如 neko.example.com)" ""; SSL_DOMAIN="$REPLY"
+    ask "NEKO_TRUSTED_HOSTS(填同一个域名)" "$SSL_DOMAIN"; NEKO_TRUSTED_HOSTS="$REPLY"
+    ask "NEKO_TRUSTED_ORIGINS(例如 https://域名:48912)" "https://$SSL_DOMAIN:48912"; NEKO_TRUSTED_ORIGINS="$REPLY"
     NEKO_REQUIRE_HTTPS=1
   else
     SSL_DOMAIN=''; NEKO_TRUSTED_HOSTS=''; NEKO_TRUSTED_ORIGINS=''; NEKO_REQUIRE_HTTPS=''
@@ -407,29 +419,29 @@ choose_image_variant() {
   if [ -n "${NEKO_IMAGE_VERSION:-}" ]; then
     case "$NEKO_IMAGE_VERSION" in
       latest|latest-standard|latest-full) ;;
-      *) warn "⚠ NEKO_IMAGE_VERSION=$NEKO_IMAGE_VERSION 不是已知版本, 继续使用该值";;
+      *) warn "⚠ NEKO_IMAGE_VERSION=$NEKO_IMAGE_VERSION 不是本喵认识的版本, 就先按这个值来";;
     esac
-    ok "✅ 镜像版本(来自环境变量): $NEKO_IMAGE_VERSION"
+    ok "✅ 镜像版本(环境变量指定): $NEKO_IMAGE_VERSION"
     return 0
   fi
 
-  printf '\n请选择镜像版本:\n'
+  printf '\n本喵问你, 要哪个镜像版本喵?:\n'
   printf '  1) latest-full  完整版(推荐, 约 2.5GB)\n'
-  printf '     内置 Chromium, 首次启动即可用, 适合国内网络\n'
+  printf '     内置 Chromium, 首次启动就能用, 适合国内网络\n'
   printf '  2) latest       标准版(约 1.5GB)\n'
-  printf '     不含 Chromium, 首次启动需下载, 国内可能较慢\n'
-  printf '     适合磁盘空间紧张的用户\n'
+  printf '     不含 Chromium, 首次启动还要下载, 国内可能慢\n'
+  printf '     磁盘紧张的话选这个\n'
 
   local choice
   while :; do
-    read -r -p "请输入选项 [1/2] (默认 1): " choice
+    read -r -p "输入选项 [1/2] (默认 1): " choice
     case "${choice:-1}" in
       1) NEKO_IMAGE_VERSION="latest-full"; break ;;
       2) NEKO_IMAGE_VERSION="latest"; break ;;
-      *) err "请输入 1 或 2" ;;
+      *) err "本喵看不懂, 请输入 1 或 2 喵" ;;
     esac
   done
-  ok "✅ 已选择镜像版本: $NEKO_IMAGE_VERSION"
+  ok "✅ 就它了, 镜像版本: $NEKO_IMAGE_VERSION"
 }
 
 # -----------------------------------------------------------------------------
@@ -445,7 +457,7 @@ pick_ghcr_mirror() {
   local first401=""   # 首个返回 401 的源(需匿名 token, docker pull 会自行处理)
   local pick=""
 
-  info "正在探测 GHCR 镜像源(检测全部候选, 200/401 视为可用)..."
+  info "本喵先探一圈 GHCR 镜像源(全部候选都测, 200/401 算可用)..."
   for mirror in "${GHCR_MIRRORS[@]}"; do
     url="https://${mirror}/v2/${NEKO_IMAGE_PATH}/manifests/${tag}"
     printf '  - %-40s ... ' "$mirror"
@@ -467,12 +479,12 @@ pick_ghcr_mirror() {
   if [ -n "$pick" ]; then
     SELECTED_MIRROR="$pick"
     NEKO_IMAGE_FULL="${pick}/${NEKO_IMAGE_PATH}:${tag}"
-    ok "✅ 选用镜像源: $SELECTED_MIRROR"
+    ok "✅ 就从这个源拉: $SELECTED_MIRROR"
     return 0
   fi
 
-  warn "⚠ 所有候选镜像源探测均失败(可能是被墙或临时故障)。"
-  warn "  将使用列表第一项作为默认; 若拉取失败请手动编辑 .env 的 NEKO_IMAGE"
+  warn "⚠ 呜...本喵把候选镜像源都试了一遍, 全军覆没(可能被墙或临时故障)。"
+  warn "  先退回列表第一个当默认; 拉不动的话, 手动编辑 .env 里的 NEKO_IMAGE 换源喵"
   SELECTED_MIRROR="${GHCR_MIRRORS[0]}"
   NEKO_IMAGE_FULL="${SELECTED_MIRROR}/${NEKO_IMAGE_PATH}:${tag}"
   return 0
@@ -512,7 +524,7 @@ NEKO_COMMUNITY_WEB_CLIENT_ID=
 NEKO_COMMUNITY_WEB_REDIRECT_URI=
 EOF
   chmod 600 "$INSTALL_DIR/.env"
-  ok "✅ 已生成 .env ($INSTALL_DIR/.env)"
+  ok "✅ .env 写好了喵($INSTALL_DIR/.env)"
 }
 
 # -----------------------------------------------------------------------------
@@ -520,7 +532,7 @@ EOF
 # -----------------------------------------------------------------------------
 main() {
   info "============================================================"
-  info " N.E.K.O. Auto Deploy"
+  info " N.E.K.O. 自动部署 —— 本喵来帮你搞定喵~"
   info " 仓库: $REPO_OWNER/$REPO_NAME @ $BRANCH"
   info " 安装目录: $INSTALL_DIR"
   info "============================================================"
@@ -528,13 +540,13 @@ main() {
   # 1) 先问用户(CrowdSec / ZRAM / 看门狗),再开始装
   ask_preflight
 
-  step "[1/5] 正在检测系统环境..."
+  step "[1/5] 本喵正在检测系统环境..."
   if [ "$(uname -s)" != "Linux" ]; then
-    err "本脚本面向 Linux(Ubuntu 系)。当前系统: $(uname -s)"
+    err "呜...这个脚本只认 Linux(Ubuntu 系)。当前系统: $(uname -s)"
     exit 1
   fi
   ok "✅ 系统检测通过: $(uname -srm) | $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}")"
-  ok "✅ 已确认: ZRAM=$([ "$ENABLE_ZRAM" = 1 ] && echo 开 || echo 关), CrowdSec=$([ "$ENABLE_CROWDSEC" = 1 ] && echo 装 || echo 不装), 看门狗=$([ "$ENABLE_WATCHDOG" = 1 ] && echo 装 || echo 不装)"
+  ok "✅ 已确认: ZRAM=$([ "$ENABLE_ZRAM" = 1 ] && echo 开 || echo 关), CrowdSec=$([ "$ENABLE_CROWDSEC" = 1 ] && echo 装 || echo 不装), 看门狗=$([ "$ENABLE_WATCHDOG" = 1 ] && echo 装 || echo 不装) 喵"
 
   # 2) 安装 Docker
   install_docker
@@ -543,36 +555,37 @@ main() {
   if [ "$ENABLE_ZRAM" = 1 ]; then
     configure_zram
   else
-    warn "[3/5] 跳过 ZRAM(你选择不开启; 需要时可重跑本脚本或手动配置)"
+    warn "[3/5] 听你的, 跳过 ZRAM(以后想要就重跑本脚本, 或手动配)"
   fi
 
   # 4) 拉取配置 + 交互 + 部署
-  step "[4/5] 正在拉取配置并部署 N.E.K.O...."
-  if ! confirm_yn "是否在当前安装目录拉取配置并继续?" y; then
-    die "已取消。"
+  step "[4/5] 本喵正在拉取配置并部署 N.E.K.O...."
+  if ! confirm_yn "就在当前目录拉取配置继续?" y; then
+    die "好吧,本喵先不装了。"
   fi
   mkdir -p "$INSTALL_DIR"
   cd "$INSTALL_DIR"
 
-  info "  开始拉取配置(每个文件都会多源回退 + 重试; 单个失败不影响其他文件)"
+  info "  开始拉取配置喵(每个文件都会多源回退 + 重试, 单个失败不影响其他文件)"
   local missing=()
   for f in "${NEED_FILES[@]}"; do
     printf '  - %s\n' "$f"
     # fetch_file 内部已是多源 + 重试, 不会因单次失败而中断
     if fetch_file "$f" "$INSTALL_DIR/$f"; then
-      ok "    ✅ OK"
+      ok "    ✅ 拿到了喵"
     else
-      err "    ❌ FAILED (所有源均失败)"
+      err "    ❌ 失败了(所有源都没取到)"
       missing+=("$f")
     fi
   done
 
   if [ "${#missing[@]}" -gt 0 ]; then
-    err "❌ 以下文件拉取失败: ${missing[*]}"
+    err "❌ 呜...这些文件本喵没拉到: ${missing[*]}"
     cat <<EOF
-  提示:
-    1) 脚本已自动尝试多个镜像源(raw / gh-proxy / ghproxy.net / jsDelivr)并各自重试,
-       仍失败通常是本机网络到 GitHub 全线不通。
+  本喵已经尽力了, 帮你试过这些办法:
+    1) 自动尝试多个镜像源(raw / gh-proxy / ghproxy.net / jsDelivr)并各自重试,
+       还是失败, 通常是本机网络到 GitHub 全线不通。
+  接下来交给你:
     2) 私有仓库请设置 token 后重试:
          GITHUB_TOKEN=ghp_xxx bash install.sh
     3) 手动改源: 用环境变量指定仓库/分支, 例如
@@ -580,12 +593,12 @@ main() {
     4) 提高重试次数与超时后重试:
          FETCH_RETRIES=5 FETCH_MAX_TIME=120 bash install.sh
     5) 检查网络: ping -c 3 raw.githubusercontent.com
-${C_R}已成功拉取的文件会保留, 修复后可重新运行本脚本。${C_0}
+${C_R}已经拉到的文件会保留, 修好网络后再跑一次就行喵。${C_0}
 EOF
     exit 1
   fi
 
-  info "  进行交互式配置..."
+  info "  进行交互式配置喵..."
   choose_image_variant
   pick_ghcr_mirror
   api_provider
@@ -596,55 +609,55 @@ EOF
   mkdir -p "$INSTALL_DIR/neko-home" "$INSTALL_DIR/logs"
   if [ "$(id -u)" = 0 ]; then
     sh "$INSTALL_DIR/preflight.sh" "$INSTALL_DIR/neko-home" "$INSTALL_DIR/logs" \
-      || warn "preflight 未完全通过(可稍后: sudo sh preflight.sh)"
+      || warn "preflight 没完全通过喵(可以稍后补: sudo sh preflight.sh)"
   else
-    warn "  当前非 root, 跳过 preflight(容器 entrypoint 首次启动时会调整属主)。"
+    warn "  当前不是 root, 本喵先跳过 preflight(容器首次启动时会自己修属主)。"
   fi
 
   if ! docker compose up -d; then
-    err "❌ docker compose up 失败"
+    err "❌ docker compose up 失败了喵"
     cat <<EOF
-  提示:
+  别急, 按顺序排查:
     1) cd $INSTALL_DIR && docker compose config  检查配置是否有误
     2) docker compose logs neko-main  查看容器日志定位原因
     3) 若提示权限,把用户加入 docker 组: sudo usermod -aG docker \$USER 并重新登录
-${C_R}请根据上方日志修复后重试。${C_0}
+${C_R}照上面的日志修好再跑一次, 本喵等你。${C_0}
 EOF
     exit 1
   fi
-  ok "✅ N.E.K.O. 服务已启动"
+  ok "✅ N.E.K.O. 服务已经启动了喵~"
 
   # 5) 看门狗 + CrowdSec
   if [ "$ENABLE_WATCHDOG" = 1 ]; then
     if [ "$(id -u)" = 0 ]; then
       sh "$INSTALL_DIR/watchdog/install-watchdog.sh" --host \
-        && ok "✅ 看门狗已安装(每 5 分钟检查一次服务健康)" \
-        || warn "⚠ 看门狗安装失败(可稍后: sudo sh $INSTALL_DIR/watchdog/install-watchdog.sh --host)"
+        && ok "✅ 看门狗装好了, 之后每 5 分钟会替你检查一次服务健康喵" \
+        || warn "⚠ 看门狗没装上(可以稍后补: sudo sh $INSTALL_DIR/watchdog/install-watchdog.sh --host)"
     else
-      warn "⚠ 非 root,跳过看门狗(可稍后: sudo sh $INSTALL_DIR/watchdog/install-watchdog.sh --host)"
+      warn "⚠ 不是 root, 本喵跳过看门狗(可稍后: sudo sh $INSTALL_DIR/watchdog/install-watchdog.sh --host)"
     fi
   else
-    warn "  跳过看门狗(你选择不安装; 需要时重跑本脚本或手动安装)"
+    warn "  听你的, 跳过看门狗(以后想要就重跑本脚本)"
   fi
 
   if [ "$ENABLE_CROWDSEC" = 1 ]; then
     configure_crowdsec
   else
-    warn "  跳过 CrowdSec(你选择不安装)"
+    warn "  听你的, 跳过 CrowdSec"
   fi
 
   # 使用说明
   ok "=========================================="
-  ok "🎉 N.E.K.O. 部署完成!"
+  ok "🎉 N.E.K.O. 部署完成喵~ 哼, 别忘了夸本喵一句。"
   ok "访问地址: http://服务器IP:$MAIN_PORT"
-  printf "${C_G}如需域名访问,请参考官方文档配置 SSL_DOMAIN${C_0}\n"
+  printf "${C_G}想用域名访问的话, 参考官方文档配一下 SSL_DOMAIN 喵。${C_0}\n"
   if [ "$ENABLE_WATCHDOG" = 1 ]; then
-    ok "看门狗已安装,每 5 分钟检查一次服务健康"
+    ok "看门狗已就位, 每 5 分钟检查一次服务健康"
   fi
   ok "管理目录: $INSTALL_DIR"
   ok "获取实例凭证:"
   ok "  docker compose -f $INSTALL_DIR/docker-compose.yml exec --user neko -w /app neko-main uv run python -m utils.instance_access"
-  ok "修改配置后重启: cd $INSTALL_DIR && docker compose up -d"
+  ok "改完配置重启: cd $INSTALL_DIR && docker compose up -d"
   ok "=========================================="
 }
 
