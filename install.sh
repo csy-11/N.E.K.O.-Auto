@@ -400,6 +400,39 @@ collect_https() {
 }
 
 # -----------------------------------------------------------------------------
+# 选择镜像版本(完整版 / 标准版)
+# -----------------------------------------------------------------------------
+choose_image_variant() {
+  # 可通过环境变量 NEKO_IMAGE_VERSION 预先指定, 跳过交互
+  if [ -n "${NEKO_IMAGE_VERSION:-}" ]; then
+    case "$NEKO_IMAGE_VERSION" in
+      latest|latest-standard|latest-full) ;;
+      *) warn "⚠ NEKO_IMAGE_VERSION=$NEKO_IMAGE_VERSION 不是已知版本, 继续使用该值";;
+    esac
+    ok "✅ 镜像版本(来自环境变量): $NEKO_IMAGE_VERSION"
+    return 0
+  fi
+
+  printf '\n请选择镜像版本:\n'
+  printf '  1) latest-full  完整版(推荐, 约 2.5GB)\n'
+  printf '     内置 Chromium, 首次启动即可用, 适合国内网络\n'
+  printf '  2) latest       标准版(约 1.5GB)\n'
+  printf '     不含 Chromium, 首次启动需下载, 国内可能较慢\n'
+  printf '     适合磁盘空间紧张的用户\n'
+
+  local choice
+  while :; do
+    read -r -p "请输入选项 [1/2] (默认 1): " choice
+    case "${choice:-1}" in
+      1) NEKO_IMAGE_VERSION="latest-full"; break ;;
+      2) NEKO_IMAGE_VERSION="latest"; break ;;
+      *) err "请输入 1 或 2" ;;
+    esac
+  done
+  ok "✅ 已选择镜像版本: $NEKO_IMAGE_VERSION"
+}
+
+# -----------------------------------------------------------------------------
 # 选择可用的 GHCR 镜像源
 # 先探测全部候选(显示各自状态码), 再选:
 #   - 200/401 视为可用; 优先 200, 其次 401(401 表示需匿名 token, docker pull 会自行处理)
@@ -459,6 +492,9 @@ gen_env() {
 TZ=${TZ:-Asia/Shanghai}
 # 镜像源(由脚本探测选择; 如需更换可手动改这一行)
 NEKO_IMAGE=$NEKO_IMAGE_FULL
+# 镜像版本(latest-full=完整版 / latest=标准版)
+# 注意: 实际生效的是上面的 NEKO_IMAGE(已含 tag); 换版本请一并改 NEKO_IMAGE 的结尾
+NEKO_IMAGE_VERSION=${NEKO_IMAGE_VERSION:-latest}
 NEKO_MAIN_SERVER_PORT=$MAIN_PORT
 NEKO_MEMORY_SERVER_PORT=$MEMORY_PORT
 NEKO_MONITOR_SERVER_PORT=$MONITOR_PORT
@@ -550,6 +586,7 @@ EOF
   fi
 
   info "  进行交互式配置..."
+  choose_image_variant
   pick_ghcr_mirror
   api_provider
   collect_api_key
