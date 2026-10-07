@@ -39,6 +39,19 @@ NEED_FILES=(
 # 安装目标目录(放 compose/.env/neko-home/logs 的地方)
 INSTALL_DIR="${INSTALL_DIR:-$(pwd)/neko-deploy}"
 
+# 候选镜像源列表(中国大陆常用 GHCR 加速)
+GHCR_MIRRORS=(
+    "docker.gh-proxy.org/ghcr.io"
+    "docker.m.daocloud.io/ghcr.io"
+    "docker.1ms.run/ghcr.io"
+    "ghcr.nju.edu.cn"
+)
+# 镜像在 registry 中的路径(上表前三个已含 /ghcr.io,nju 直接拼)
+NEKO_IMAGE_PATH="project-n-e-k-o/n.e.k.o"
+# 选中的镜像源(由 pick_ghcr_mirror 填充)
+SELECTED_MIRROR=""
+NEKO_IMAGE_FULL=""
+
 # -----------------------------------------------------------------------------
 # 颜色与日志(非 tty 自动关闭)
 # -----------------------------------------------------------------------------
@@ -318,12 +331,65 @@ collect_https() {
 }
 
 # -----------------------------------------------------------------------------
+# 选择可用的 GHCR 镜像源
+# 先探测全部候选(显示各自状态码), 再选:
+#   - 200/401 视为可用; 优先 200, 其次 401(401 表示需匿名 token, docker pull 会自行处理)
+#   - 这样即使某源被限流返回 403/404, 也不会误判为"唯一可用源"
+# -----------------------------------------------------------------------------
+pick_ghcr_mirror() {
+  local tag="${NEKO_IMAGE_VERSION:-latest}"
+  local mirror url code
+  local first200=""   # 首个返回 200 的源(直连可用, 最佳)
+  local first401=""   # 首个返回 401 的源(需匿名 token, docker pull 会自行处理)
+  local pick=""
+
+  info "正在探测 GHCR 镜像源(检测全部候选, 200/401 视为可用)..."
+  for mirror in "${GHCR_MIRRORS[@]}"; do
+    url="https://${mirror}/v2/${NEKO_IMAGE_PATH}/manifests/${tag}"
+    printf '  - %-40s ... ' "$mirror"
+    # 注意: curl 失败时勿用 "|| echo 000" 追加, 否则状态码会被拼接(如 404000)
+    code=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 8 "$url" 2>/dev/null) || true
+    [ -n "$code" ] || code=000
+    case "$code" in
+      200) printf '可用 (200)\n';     [ -z "$first200" ] && first200="$mirror" ;;
+      401) printf '可用 (401)\n';     [ -z "$first401" ] && first401="$mirror" ;;
+      *)   printf '不可用 (%s)\n' "$code" ;;
+    esac
+  done
+
+  # 优先 200(直连可用), 其次 401(需 token), 避免限流返回 403/404 时误判
+  if   [ -n "$first200" ]; then pick="$first200"
+  elif [ -n "$first401" ]; then pick="$first401"
+  fi
+
+  if [ -n "$pick" ]; then
+    SELECTED_MIRROR="$pick"
+    NEKO_IMAGE_FULL="${pick}/${NEKO_IMAGE_PATH}:${tag}"
+    ok "✅ 选用镜像源: $SELECTED_MIRROR"
+    return 0
+  fi
+
+  warn "⚠ 所有候选镜像源探测均失败(可能是被墙或临时故障)。"
+  warn "  将使用列表第一项作为默认; 若拉取失败请手动编辑 .env 的 NEKO_IMAGE"
+  SELECTED_MIRROR="${GHCR_MIRRORS[0]}"
+  NEKO_IMAGE_FULL="${SELECTED_MIRROR}/${NEKO_IMAGE_PATH}:${tag}"
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # 生成 .env
 # -----------------------------------------------------------------------------
 gen_env() {
+  # 兜底: 万一没经过探测, 用列表第一项
+  if [ -z "$NEKO_IMAGE_FULL" ]; then
+    SELECTED_MIRROR="${SELECTED_MIRROR:-${GHCR_MIRRORS[0]}}"
+    NEKO_IMAGE_FULL="${SELECTED_MIRROR}/${NEKO_IMAGE_PATH}:${NEKO_IMAGE_VERSION:-latest}"
+  fi
   cat > "$INSTALL_DIR/.env" <<EOF
 # 由 install.sh 自动生成; 之后可手动编辑
 TZ=${TZ:-Asia/Shanghai}
+# 镜像源(由脚本探测选择; 如需更换可手动改这一行)
+NEKO_IMAGE=$NEKO_IMAGE_FULL
 NEKO_MAIN_SERVER_PORT=$MAIN_PORT
 NEKO_MEMORY_SERVER_PORT=$MEMORY_PORT
 NEKO_MONITOR_SERVER_PORT=$MONITOR_PORT
@@ -393,6 +459,7 @@ main() {
   fi
 
   info "  进行交互式配置..."
+  pick_ghcr_mirror
   api_provider
   collect_api_key
   collect_https
