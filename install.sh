@@ -84,16 +84,16 @@ esac
 ask_preflight() {
   info "============================================================"
   info " 欢迎使用 N.E.K.O. 自动部署脚本"
-  info " 在正式安装前,先问你几个问题:"
+  info " 在正式安装前,YUI想先问你几个问题喵:"
   info "============================================================"
-  printf "是否需要开启 ZRAM 内存压缩?(推荐 Y,能缓解低配机的内存压力)\n"
+  printf "是否需要开启 ZRAM 内存压缩喵?(推荐 Y,能缓解低配机的内存压力)\n"
   read -r -p "  开启 ZRAM? [Y/n]: " ans; ENABLE_ZRAM=0
   case "${ans:-y}" in
     y|Y|yes|YES|'') ENABLE_ZRAM=1 ;;
     *) ENABLE_ZRAM=0 ;;
   esac
 
-  printf "是否需要安装 CrowdSec 防爆破?(推荐 Y,可拦截 SSH 等暴力破解)\n"
+  printf "是否需要安装 CrowdSec 防爆破喵?(推荐 Y,可拦截 SSH 等暴力破解喵～)\n"
   printf "  注意:CrowdSec 安装较慢,且只对已接入日志的服务生效\n"
   read -r -p "  安装 CrowdSec? [Y/n]: " ans; ENABLE_CROWDSEC=0
   case "${ans:-y}" in
