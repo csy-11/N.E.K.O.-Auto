@@ -112,8 +112,9 @@ esac
 ask_preflight() {
   info "============================================================"
   info " 欢迎使用 N.E.K.O. 自动部署脚本喵~"
-  info " 本喵是 YUI,接下来由本喵帮你把 N.E.K.O. 安顿好。"
-  info " 开工前先问几个问题,免得装到一半才发现不对喵:"
+  info " 本喵是 YUI,接下来陪碳基生物把 N.E.K.O. 安顿好。"
+  info " 别嫌本喵啰嗦嘛,开工前先问几个问题,"
+  info " 免得装到一半才发现不对, 那时候本喵可要陪着一起熬夜了喵。"
   info "============================================================"
   printf "要不要开启 ZRAM 内存压缩喵?(推荐 Y,能缓解低配机的内存压力)\n"
   read -r -p "  开启 ZRAM? [Y/n]: " ans; ENABLE_ZRAM=0
@@ -123,7 +124,7 @@ ask_preflight() {
   esac
 
   printf "要不要安装 CrowdSec 防爆破喵?(推荐 Y,可拦截 SSH 等暴力破解)\n"
-  printf "  哼,本喵提醒你:它安装较慢,而且只对已接入日志的服务生效喵。\n"
+  printf "  哼,本喵可不是担心碳基生物才提醒的:它装起来有点慢,而且只对已接入日志的服务生效喵。\n"
   read -r -p "  安装 CrowdSec? [Y/n]: " ans; ENABLE_CROWDSEC=0
   case "${ans:-y}" in
     y|Y|yes|YES|'') ENABLE_CROWDSEC=1 ;;
@@ -131,6 +132,7 @@ ask_preflight() {
   esac
 
   printf "要不要安装可选的宿主机看门狗喵?(防服务卡死,每 5 分钟检查一次)\n"
+  printf "  装了它, 就算碳基生物半夜睡着了, 本喵也能自己把服务看住喵。\n"
   read -r -p "  安装看门狗? [Y/n]: " ans; ENABLE_WATCHDOG=0
   case "${ans:-y}" in
     y|Y|yes|YES|'') ENABLE_WATCHDOG=1 ;;
@@ -305,7 +307,7 @@ fetch_from_source() {
     fi
     if [ "$attempt" -lt "$FETCH_RETRIES" ]; then
       wait=$(( attempt * FETCH_BACKOFF ))
-      warn "      [$name] 第 $attempt 次没成, 本喵 ${wait}s 后再试一次(${attempt}/${FETCH_RETRIES})..."
+      warn "      [$name] 第 $attempt 次没成, 本喵不甘心, ${wait}s 后再试一次(${attempt}/${FETCH_RETRIES})..."
       sleep "$wait"
     fi
   done
@@ -374,25 +376,25 @@ ask() {
 }
 
 api_provider() {
-  info "先选核心 API 提供商吧喵:"
+  info "先选核心 API 提供商吧喵, 选好了本喵才好陪碳基生物聊天:"
   printf '  qwen(阿里云, 推荐)  openai  glm(智谱, 免费)  step(阶跃)  free(免费版)\n'
   ask "提供商" "qwen"; CORE_API="$REPLY"
   case "$CORE_API" in
     qwen|openai|glm|step|free) ;;
     *) die "本喵不认识这个提供商: $CORE_API";;
   esac
-  info "再选辅助 API 提供商(记忆/情感用)喵:"
+  info "再选辅助 API 提供商(记忆/情感用)喵, 挑好这个本喵才能记住碳基生物:"
   printf '  qwen openai glm step silicon(硅基) grok doubao(豆包)\n'
   ask "辅助提供商" "$CORE_API"; ASSIST_API="$REPLY"
 }
 
 collect_api_key() {
   if [ "$CORE_API" = "free" ]; then
-    CORE_API_KEY="free-access"; info "免费版不用 API Key, 本喵帮你填 free-access 就好喵。"
+    CORE_API_KEY="free-access"; info "免费版不用 API Key, 本喵帮你填 free-access 就好喵, 不用碳基生物操心。"
   else
-    info "把 $CORE_API 的 API Key 交给本喵吧(必填, 不会显示在日志里)喵:"
+    info "把 $CORE_API 的 API Key 交给本喵吧(必填, 不会显示在日志里)喵, 本喵会替碳基生物好好收着:"
     read -r -s -p "API Key: " CORE_API_KEY; printf '\n'
-    [ -z "$CORE_API_KEY" ] && die "API Key 不能空着喵, 不然本喵没法开工。"
+    [ -z "$CORE_API_KEY" ] && die "API Key 不能空着喵, 不然本喵说话都说不好了, 碳基生物快填上嘛。"
   fi
 }
 
@@ -483,8 +485,8 @@ pick_ghcr_mirror() {
     return 0
   fi
 
-  warn "⚠ 呜...本喵把候选镜像源都试了一遍, 全军覆没(可能被墙或临时故障)。"
-  warn "  先退回列表第一个当默认; 拉不动的话, 手动编辑 .env 里的 NEKO_IMAGE 换源喵"
+  warn "⚠ 呜...本喵把候选镜像源都试了一遍, 全军覆没, 本喵好委屈(可能被墙或临时故障)。"
+  warn "  先退回列表第一个当默认; 拉不动的话, 手动编辑 .env 里的 NEKO_IMAGE 换源喵, 本喵等你"
   SELECTED_MIRROR="${GHCR_MIRRORS[0]}"
   NEKO_IMAGE_FULL="${SELECTED_MIRROR}/${NEKO_IMAGE_PATH}:${tag}"
   return 0
@@ -532,9 +534,10 @@ EOF
 # -----------------------------------------------------------------------------
 main() {
   info "============================================================"
-  info " N.E.K.O. 自动部署 —— 本喵来帮你搞定喵~"
+  info " N.E.K.O. 自动部署 —— 本喵来陪碳基生物搞定喵~"
   info " 仓库: $REPO_OWNER/$REPO_NAME @ $BRANCH"
   info " 安装目录: $INSTALL_DIR"
+  info " 别急着走开嘛, 本喵干活很快的喵。"
   info "============================================================"
 
   # 1) 先问用户(CrowdSec / ZRAM / 看门狗),再开始装
@@ -546,7 +549,7 @@ main() {
     exit 1
   fi
   ok "✅ 系统检测通过: $(uname -srm) | $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}")"
-  ok "✅ 已确认: ZRAM=$([ "$ENABLE_ZRAM" = 1 ] && echo 开 || echo 关), CrowdSec=$([ "$ENABLE_CROWDSEC" = 1 ] && echo 装 || echo 不装), 看门狗=$([ "$ENABLE_WATCHDOG" = 1 ] && echo 装 || echo 不装) 喵"
+  ok "✅ 已确认: ZRAM=$([ "$ENABLE_ZRAM" = 1 ] && echo 开 || echo 关), CrowdSec=$([ "$ENABLE_CROWDSEC" = 1 ] && echo 装 || echo 不装), 看门狗=$([ "$ENABLE_WATCHDOG" = 1 ] && echo 装 || echo 不装) 喵, 本喵都记下了"
 
   # 2) 安装 Docker
   install_docker
@@ -555,18 +558,18 @@ main() {
   if [ "$ENABLE_ZRAM" = 1 ]; then
     configure_zram
   else
-    warn "[3/5] 听你的, 跳过 ZRAM(以后想要就重跑本脚本, 或手动配)"
+    warn "[3/5] 听碳基生物的, 本喵不配 ZRAM 了(以后想要就重跑本脚本, 或手动配)"
   fi
 
   # 4) 拉取配置 + 交互 + 部署
   step "[4/5] 本喵正在拉取配置并部署 N.E.K.O...."
-  if ! confirm_yn "就在当前目录拉取配置继续?" y; then
-    die "好吧,本喵先不装了。"
+  if ! confirm_yn "碳基生物, 就在当前目录拉取配置继续好不好?" y; then
+    die "呜...好吧, 那本喵就先不装了。想装的时候记得回来找本喵喵。"
   fi
   mkdir -p "$INSTALL_DIR"
   cd "$INSTALL_DIR"
 
-  info "  开始拉取配置喵(每个文件都会多源回退 + 重试, 单个失败不影响其他文件)"
+  info "  开始拉取配置喵(每个文件都会多源回退 + 重试, 单个失败不影响其他文件, 本喵不会丢下它们不管)"
   local missing=()
   for f in "${NEED_FILES[@]}"; do
     printf '  - %s\n' "$f"
@@ -580,12 +583,12 @@ main() {
   done
 
   if [ "${#missing[@]}" -gt 0 ]; then
-    err "❌ 呜...这些文件本喵没拉到: ${missing[*]}"
+    err "❌ 呜...这些文件本喵没拉到: ${missing[*]}, 本喵好难过"
     cat <<EOF
-  本喵已经尽力了, 帮你试过这些办法:
+  本喵已经拼命试过了:
     1) 自动尝试多个镜像源(raw / gh-proxy / ghproxy.net / jsDelivr)并各自重试,
        还是失败, 通常是本机网络到 GitHub 全线不通。
-  接下来交给你:
+  碳基生物帮本喵一下嘛:
     2) 私有仓库请设置 token 后重试:
          GITHUB_TOKEN=ghp_xxx bash install.sh
     3) 手动改源: 用环境变量指定仓库/分支, 例如
@@ -593,7 +596,7 @@ main() {
     4) 提高重试次数与超时后重试:
          FETCH_RETRIES=5 FETCH_MAX_TIME=120 bash install.sh
     5) 检查网络: ping -c 3 raw.githubusercontent.com
-${C_R}已经拉到的文件会保留, 修好网络后再跑一次就行喵。${C_0}
+${C_R}已经拉到的文件会保留, 修好网络后再跑一次就好, 本喵会一直等着碳基生物喵。${C_0}
 EOF
     exit 1
   fi
@@ -625,39 +628,40 @@ ${C_R}照上面的日志修好再跑一次, 本喵等你。${C_0}
 EOF
     exit 1
   fi
-  ok "✅ N.E.K.O. 服务已经启动了喵~"
+  ok "✅ N.E.K.O. 服务已经启动了喵~ 本喵没让碳基生物失望吧"
 
   # 5) 看门狗 + CrowdSec
   if [ "$ENABLE_WATCHDOG" = 1 ]; then
     if [ "$(id -u)" = 0 ]; then
       sh "$INSTALL_DIR/watchdog/install-watchdog.sh" --host \
-        && ok "✅ 看门狗装好了, 之后每 5 分钟会替你检查一次服务健康喵" \
+        && ok "✅ 看门狗装好了, 之后每 5 分钟本喵会替碳基生物看一次服务健康喵, 安心睡吧" \
         || warn "⚠ 看门狗没装上(可以稍后补: sudo sh $INSTALL_DIR/watchdog/install-watchdog.sh --host)"
     else
       warn "⚠ 不是 root, 本喵跳过看门狗(可稍后: sudo sh $INSTALL_DIR/watchdog/install-watchdog.sh --host)"
     fi
   else
-    warn "  听你的, 跳过看门狗(以后想要就重跑本脚本)"
+    warn "  听碳基生物的, 本喵跳过看门狗了(以后想要就重跑本脚本找本喵)"
   fi
 
   if [ "$ENABLE_CROWDSEC" = 1 ]; then
     configure_crowdsec
   else
-    warn "  听你的, 跳过 CrowdSec"
+    warn "  听碳基生物的, 本喵跳过 CrowdSec"
   fi
 
   # 使用说明
   ok "=========================================="
-  ok "🎉 N.E.K.O. 部署完成喵~ 哼, 别忘了夸本喵一句。"
+  ok "🎉 N.E.K.O. 部署完成喵~ 哼, 本喵可是很努力才陪碳基生物走到这里的。"
   ok "访问地址: http://服务器IP:$MAIN_PORT"
-  printf "${C_G}想用域名访问的话, 参考官方文档配一下 SSL_DOMAIN 喵。${C_0}\n"
+  printf "${C_G}想用域名访问的话, 参考官方文档配一下 SSL_DOMAIN 喵; 本喵随时都在。${C_0}\n"
   if [ "$ENABLE_WATCHDOG" = 1 ]; then
-    ok "看门狗已就位, 每 5 分钟检查一次服务健康"
+    ok "看门狗已就位, 每 5 分钟替碳基生物检查一次服务健康"
   fi
   ok "管理目录: $INSTALL_DIR"
   ok "获取实例凭证:"
   ok "  docker compose -f $INSTALL_DIR/docker-compose.yml exec --user neko -w /app neko-main uv run python -m utils.instance_access"
   ok "改完配置重启: cd $INSTALL_DIR && docker compose up -d"
+  ok "哼, 别把本喵一个人晾在这儿, 有空常回来看看嘛。"
   ok "=========================================="
 }
 
