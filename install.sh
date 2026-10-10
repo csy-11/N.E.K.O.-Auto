@@ -51,6 +51,13 @@ NEED_FILES=(
   preflight.sh
   watchdog/watchdog.sh
   watchdog/install-watchdog.sh
+  # 宿主机看门狗两版（装哪个由交互选择决定，见 ask_preflight）
+  watchdog/v1/watchdog.sh
+  watchdog/v1/uid-align.sh
+  watchdog/v1/time-sync.sh
+  watchdog/v2/watchdog.sh
+  watchdog/v2/uid-align.sh
+  watchdog/v2/time-sync.sh
 )
 
 # 安装目标目录(放 compose/.env/neko-home/logs 的地方)
@@ -133,11 +140,20 @@ ask_preflight() {
 
   printf "要不要安装可选的宿主机看门狗喵?(防服务卡死,每 5 分钟检查一次)\n"
   printf "  装了它, 就算碳基生物半夜睡着了, 本喵也能自己把服务看住喵。\n"
-  read -r -p "  安装看门狗? [Y/n]: " ans; ENABLE_WATCHDOG=0
-  case "${ans:-y}" in
-    y|Y|yes|YES|'') ENABLE_WATCHDOG=1 ;;
-    *) ENABLE_WATCHDOG=0 ;;
+  printf "  选哪个版本?\n"
+  printf "    1) V2 合并版(推荐): 二代健壮性(启动宽限期/重启预算/暂停检测/原子状态)\n"
+  printf "       + 完整属主对齐(遍历每个条目, user/group 都纠)\n"
+  printf "    2) V1 第一代: 逻辑简洁直白; 属主对齐只查顶层目录(快速, 但有盲区)\n"
+  printf "    3) 不装\n"
+  read -r -p "  选哪个? [1/2/3] (默认 1): " ans
+  case "${ans:-1}" in
+    1) WATCHDOG_VERSION="v2" ;;
+    2) WATCHDOG_VERSION="v1" ;;
+    3|n|N|no|NO|skip) WATCHDOG_VERSION="" ;;
+    *) WATCHDOG_VERSION="v2" ;;
   esac
+  ENABLE_WATCHDOG=0
+  [ -n "$WATCHDOG_VERSION" ] && ENABLE_WATCHDOG=1
 }
 
 # -----------------------------------------------------------------------------
@@ -264,6 +280,50 @@ EOF
   ok "✅ CrowdSec 装好了喵"
   warn "  本喵多嘴一句: 如果 Docker 用的是 iptables 后端, bouncer 配置里要合并"
   warn "        iptables_chains: [INPUT, DOCKER-USER](细节看 CrowdSec 官方文档喵)"
+}
+
+# -----------------------------------------------------------------------------
+# 安装宿主机看门狗(V1 / V2 由 $WATCHDOG_VERSION 决定)
+#   V1 = 第一代, V2 = 合并版; 各自带配套的 uid-align / time-sync
+#   uid-align 与 time-sync 会被看门狗按 $BASE_DIR/<脚本名> 调用,
+#   所以它们落地到 INSTALL_DIR 根, 看门狗本体放 watchdog/ 下。
+# -----------------------------------------------------------------------------
+install_host_watchdog() {
+  local ver="$WATCHDOG_VERSION"
+  local src="$INSTALL_DIR/watchdog/$ver"
+  local runner="$INSTALL_DIR/watchdog/watchdog-host.sh"
+
+  [ -n "$ver" ] || return 0
+  if [ ! -f "$src/watchdog.sh" ]; then
+    warn "⚠ 没找到 $src/watchdog.sh, 跳过看门狗安装"
+    return 0
+  fi
+
+  step "[5/5] 本喵正在安装宿主机看门狗($ver)..."
+
+  cp -f "$src/watchdog.sh"  "$runner"
+  cp -f "$src/uid-align.sh" "$INSTALL_DIR/uid-align.sh"
+  cp -f "$src/time-sync.sh" "$INSTALL_DIR/time-sync.sh"
+  chmod 755 "$runner" "$INSTALL_DIR/uid-align.sh" "$INSTALL_DIR/time-sync.sh"
+  mkdir -p "$INSTALL_DIR/logs" "$INSTALL_DIR/state"
+
+  local cron=/etc/cron.d/neko-watchdog
+  cat > "$cron" <<EOF
+# N.E.K.O 宿主机看门狗（版本: $ver，由 install.sh 写入）
+# 每 5 分钟检查一次；日志见 $INSTALL_DIR/logs/
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+NEKO_WATCHDOG_BASE_DIR=$INSTALL_DIR
+*/5 * * * * root $runner
+EOF
+  chown root:root "$cron" 2>/dev/null
+  chmod 644 "$cron"
+
+  ok "✅ 看门狗($ver)装好了喵, 每 5 分钟替碳基生物看一次服务健康"
+  info "   本体: $runner"
+  info "   配套: $INSTALL_DIR/uid-align.sh (属主对齐)"
+  info "         $INSTALL_DIR/time-sync.sh (时区/时间校准)"
+  info "   cron: $cron"
 }
 
 # -----------------------------------------------------------------------------
@@ -549,7 +609,7 @@ main() {
     exit 1
   fi
   ok "✅ 系统检测通过: $(uname -srm) | $(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}")"
-  ok "✅ 已确认: ZRAM=$([ "$ENABLE_ZRAM" = 1 ] && echo 开 || echo 关), CrowdSec=$([ "$ENABLE_CROWDSEC" = 1 ] && echo 装 || echo 不装), 看门狗=$([ "$ENABLE_WATCHDOG" = 1 ] && echo 装 || echo 不装) 喵, 本喵都记下了"
+  ok "✅ 已确认: ZRAM=$([ "$ENABLE_ZRAM" = 1 ] && echo 开 || echo 关), CrowdSec=$([ "$ENABLE_CROWDSEC" = 1 ] && echo 装 || echo 不装), 看门狗=${WATCHDOG_VERSION:-不装} 喵, 本喵都记下了"
 
   # 2) 安装 Docker
   install_docker
@@ -630,14 +690,13 @@ EOF
   fi
   ok "✅ N.E.K.O. 服务已经启动了喵~ 本喵没让碳基生物失望吧"
 
-  # 5) 看门狗 + CrowdSec
+  # 5) 看门狗(按所选版本) + CrowdSec
   if [ "$ENABLE_WATCHDOG" = 1 ]; then
     if [ "$(id -u)" = 0 ]; then
-      sh "$INSTALL_DIR/watchdog/install-watchdog.sh" --host \
-        && ok "✅ 看门狗装好了, 之后每 5 分钟本喵会替碳基生物看一次服务健康喵, 安心睡吧" \
-        || warn "⚠ 看门狗没装上(可以稍后补: sudo sh $INSTALL_DIR/watchdog/install-watchdog.sh --host)"
+      install_host_watchdog
     else
-      warn "⚠ 不是 root, 本喵跳过看门狗(可稍后: sudo sh $INSTALL_DIR/watchdog/install-watchdog.sh --host)"
+      warn "⚠ 不是 root, 本喵跳过看门狗(可稍后用 root 重跑本脚本, 或手动执行)"
+      info "   更简单: sudo bash install.sh 重跑一次即可"
     fi
   else
     warn "  听碳基生物的, 本喵跳过看门狗了(以后想要就重跑本脚本找本喵)"
@@ -655,7 +714,7 @@ EOF
   ok "访问地址: http://服务器IP:$MAIN_PORT"
   printf "${C_G}想用域名访问的话, 参考官方文档配一下 SSL_DOMAIN 喵; 本喵随时都在。${C_0}\n"
   if [ "$ENABLE_WATCHDOG" = 1 ]; then
-    ok "看门狗已就位, 每 5 分钟替碳基生物检查一次服务健康"
+    ok "看门狗(${WATCHDOG_VERSION})已就位, 每 5 分钟替碳基生物检查一次服务健康"
   fi
   ok "管理目录: $INSTALL_DIR"
   ok "获取实例凭证:"
