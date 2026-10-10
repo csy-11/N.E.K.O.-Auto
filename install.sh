@@ -257,7 +257,68 @@ EOF
 
 # -----------------------------------------------------------------------------
 # CrowdSec 配置(带失败引导)
+#   安装后引导绑定 CrowdSec Console(enroll key 由控制台生成, 需用户粘贴)
 # -----------------------------------------------------------------------------
+CROWDSEC_CONSOLE_URL="https://app.crowdsec.net"
+
+# 已注册到 Console 就返回 0
+# 注意: 未注册时输出是 "❌ not enrolled", 也含 "enrolled" 字样,
+#       所以必须先排除 "not enrolled", 不能直接 grep enrolled。
+crowdsec_already_enrolled() {
+  local row
+  row=$(sudo cscli console status 2>/dev/null | grep -iE '^[[:space:]]*\|[[:space:]]*Enrolled' | head -1)
+  [ -n "$row" ] || return 1
+  printf '%s' "$row" | grep -qiE 'not[ _-]?enrolled' && return 1
+  printf '%s' "$row" | grep -qiE 'enrolled' && return 0
+  return 1
+}
+
+# 引导绑定 Console: 让用户去控制台拿 enroll key, 再执行 cscli console enroll
+bind_crowdsec_console() {
+  local key name out
+
+  echo
+  info "接下来把本机引擎绑定到 CrowdSec 控制台喵(可选, 但推荐 —— 能看到攻击统计):"
+  info "  1) 浏览器打开  $CROWDSEC_CONSOLE_URL  注册/登录"
+  info "  2) 控制台里点「Add an engine / 添加引擎」, 它会给你一串 enroll key"
+  info "  3) 把那串 key 粘到下面(直接回车 = 先不绑, 本喵不勉强)喵"
+  echo
+
+  if crowdsec_already_enrolled; then
+    ok "✅ 本机已经注册到 Console 了喵, 不用重复绑定"
+    sudo cscli console status 2>/dev/null | sed -n '1,8p'
+    return 0
+  fi
+
+  key=""
+  if [ -t 0 ]; then
+    read -r -p "  粘贴 enroll key(回车跳过): " key
+  fi
+  key=$(printf '%s' "$key" | tr -d '[:space:]')
+
+  if [ -z "$key" ]; then
+    warn "  好, 这次先不绑。以后想绑的时候执行:"
+    info "    sudo cscli console enroll --name $(hostname 2>/dev/null || echo neko) <你的-enroll-key>"
+    info "    enroll key 到 $CROWDSEC_CONSOLE_URL 拿"
+    return 0
+  fi
+
+  name=$(hostname 2>/dev/null || echo neko)
+  info "  正在注册到 Console(名字: $name)..."
+  if out=$(sudo cscli console enroll --name "$name" "$key" 2>&1); then
+    printf '%s\n' "$out" | sed 's/^/    /'
+    ok "✅ 注册请求提交了喵"
+    warn "  最后一步要你自己去控制台确认:"
+    info "    $CROWDSEC_CONSOLE_URL  → 找到待确认的实例 → 点确认"
+    info "  查看绑定状态: sudo cscli console status"
+  else
+    printf '%s\n' "$out" | sed 's/^/    /'
+    warn "⚠ 注册没成功(常见原因: key 打错 / 已过期 / 已被用过)"
+    info "  稍后手动重试: sudo cscli console enroll --name $name <enroll-key>"
+    info "  控制台(拿新 key): $CROWDSEC_CONSOLE_URL"
+  fi
+}
+
 configure_crowdsec() {
   local hdr="[5/5] 本喵正在安装 CrowdSec 防爆破..."
   step "$hdr"
@@ -280,6 +341,9 @@ EOF
   ok "✅ CrowdSec 装好了喵"
   warn "  本喵多嘴一句: 如果 Docker 用的是 iptables 后端, bouncer 配置里要合并"
   warn "        iptables_chains: [INPUT, DOCKER-USER](细节看 CrowdSec 官方文档喵)"
+
+  # 装完引导绑定 Console(拿 enroll key 的入口就在这一步给出来)
+  bind_crowdsec_console
 }
 
 # -----------------------------------------------------------------------------

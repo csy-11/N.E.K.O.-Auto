@@ -208,6 +208,28 @@ rm -f <安装目录>/watchdog/watchdog-host.sh \
 - `.env` 里有 API Key,不要提交进任何公共仓库(已建议加入 `.gitignore`)。
 - API Key 属于敏感信息,不要写进脚本、日志或截图。
 
+### 🛡️ CrowdSec 绑定控制台(可选,但推荐)
+
+`install.sh` 装完 CrowdSec 后会**引导碳基生物绑定 CrowdSec Console** ——
+绑上就能在网页上看到攻击统计和封禁情况了喵。
+
+1. 打开 **<https://app.crowdsec.net>** 注册 / 登录
+2. 控制台里点「Add an engine / 添加引擎」,它会给你一串 **enroll key**
+3. 回到安装脚本,把那串 key 粘进去(直接回车 = 先不绑,本喵不勉强)
+
+装完之后想补绑:
+
+```bash
+sudo cscli console enroll --name "$(hostname)" <你的-enroll-key>
+sudo cscli console status      # 查看绑定状态
+```
+
+> **enroll key 是控制台生成的,不是本机产生的** —— 所以脚本能做的是
+> 「给出控制台地址 + 引导粘贴 + 执行 enroll + 提示去控制台确认」;
+> 本机并没有一个可以"输出"给你的绑定密钥喵。
+
+已经绑过的实例,脚本会识别出来并跳过,不会重复注册。
+
 ---
 
 ## 📄 关联文档
