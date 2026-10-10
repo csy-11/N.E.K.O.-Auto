@@ -39,29 +39,14 @@ docker/ 方案(仓库根)
 
 小白友好。把下面命令粘到 Ubuntu 服务器的终端里回车即可。
 
-### 公有方式(仓库公开时用这条)
+### 方式一:一行命令
 
 ```bash
 bash <(curl -L https://raw.githubusercontent.com/csy-11/N.E.K.O.-Auto/main/install.sh)
 # 旧命令 deploy.sh 仍可用: bash <(curl -L .../main/deploy.sh)
 ```
 
-### 私有仓库(带 Personal Access Token)
-
-私有仓库无法从 `raw.githubusercontent.com` 匿名拉取,需要用 API 把
-`install.sh` 取下来再执行:
-
-```bash
-export GITHUB_TOKEN=ghp_你的token
-curl -L -H "Authorization: Bearer $GITHUB_TOKEN" \
-  "https://api.github.com/repos/csy-11/N.E.K.O.-Auto/contents/install.sh?ref=main" \
-  | python3 -c "import sys,json,base64;open('install.sh','w').write(base64.b64decode(json.load(sys.stdin)['content']).decode())"
-sudo bash install.sh
-```
-
-> token 需要 `repo` 权限,且**只能用于你自己的账号**。用完请吊销。
-
-### git 方式
+### 方式二:git 方式
 
 ```bash
 git clone git@github.com:csy-11/N.E.K.O.-Auto.git
@@ -154,7 +139,7 @@ sudo rm -rf /opt/neko
 - 远程尽量用 HTTPS/WSS:`NEKO_REQUIRE_HTTPS=1`;
   纯 HTTP 会明文传输配对 key 与会话 Cookie。
 - `.env` 里有 API Key,不要提交进任何公共仓库(已建议加入 `.gitignore`)。
-- API Key 属于敏感信息,部署完记得把你的 GitHub token 吊销。
+- API Key 属于敏感信息,不要写进脚本、日志或截图。
 
 ---
 
