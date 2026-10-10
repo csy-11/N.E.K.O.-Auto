@@ -27,10 +27,19 @@ docker/ 方案(仓库根)
 ├── README_Docker.md      # 官方 Docker 部署说明
 ├── CONFIG_REFERENCE.md   # 配置项参考
 ├── config/               # 配置示例(不挂载进容器)
-└── watchdog/             # 可选宿主机自愈看门狗
-    ├── watchdog.sh            # 探测与恢复脚本
-    ├── install-watchdog.sh    # 安装器(写 root cron)
-    └── test-watchdog.sh       # 回归测试
+└── watchdog/             # 可选宿主机自愈看门狗(两种实现)
+    ├── README.md              # 两版对照表 + 选型建议
+    ├── watchdog.sh            # 上游官方版(独立实现)
+    ├── install-watchdog.sh    # 官方安装器(写 root cron)
+    ├── test-watchdog.sh       # 回归测试
+    ├── v1/                    # 第一代: 逻辑简单, 属主对齐仅查顶层
+    │   ├── watchdog.sh
+    │   ├── uid-align.sh
+    │   └── time-sync.sh
+    └── v2/                    # 合并版(推荐): 二代健壮性 + 完整属主对齐
+        ├── watchdog.sh
+        ├── uid-align.sh
+        └── time-sync.sh
 ```
 
 ---
@@ -64,6 +73,7 @@ sudo bash install.sh
 是否需要开启 ZRAM 内存压缩?(推荐 Y)
 是否需要安装 CrowdSec 防爆破?(推荐 Y)
 需要安装可选宿主机看门狗吗?(每 5 分钟检查一次服务健康, 推荐 Y)
+  └─ 选哪个版本? 1) V2 合并版(推荐)  2) V1 第一代  3) 不装
 ```
 
 然后按 `[1/5]`~`[5/5]` 分步执行,每步都有进度日志(成功标 ✅,失败给修复提示):
@@ -74,7 +84,7 @@ sudo bash install.sh
 | `[2/5]` | 安装 Docker(带 Compose v2) |
 | `[3/5]` | 配置 ZRAM 内存压缩(缓解低配机内存压力) |
 | `[4/5]` | 拉取配置 → 交互式填 API 提供商/Key/HTTPS/端口 → 生成 `.env` → `docker compose up` |
-| `[5/5]` | 按选择安装 CrowdSec 防爆破、宿主机看门狗 |
+| `[5/5]` | 按选择安装 CrowdSec 防爆破、宿主机看门狗(可选 V1/V2) |
 
 交互式配置会问:
 - 核心 API 提供商(`qwen`/`openai`/`glm`/`step`/`free`)
@@ -101,9 +111,52 @@ sudo sh preflight.sh "$PWD/neko-home" "$PWD/logs"
 # 4. 启动
 docker compose up -d
 
-# 5. (可选)安装看门狗
-sudo sh watchdog/install-watchdog.sh --host
+# 5. (可选)安装看门狗 — 二选一
+#    推荐 V2(合并版); V1 是更简单的第一代实现
+#    用法见 watchdog/README.md, 或直接用 install.sh 的交互选择
+sudo sh watchdog/install-watchdog.sh --host       # 上游官方版
+# 或手动落地 V1/V2: 见下方「宿主机看门狗」一节
 ```
+
+---
+
+## 🐕 宿主机看门狗(V1 / V2)
+
+`install.sh` 会让你二选一;选中的版本会**连同配套的 `uid-align` / `time-sync` 一起安装**。
+
+| | **V1 第一代** | **V2 合并版(推荐)** |
+|---|---|---|
+| 健康检查 | nginx / 应用端口 / 数据目录可写 | 同左 |
+| 启动宽限期 | ❌ | ✅ 默认 900s,避免重启后误判 |
+| 暂停 / 重启中 | ❌ 会对 paused 容器动手 | ✅ 自动跳过 |
+| 失败计数 | 仅计数 | **绑定容器ID + 启动时间** |
+| 重启预算 | 连续 2 次重启,第 3 次转人工 | 最多 3 次,**耗尽只报一次** |
+| 停止态 | 无处理 | **只报告,绝不自动 start** |
+| 维护暂停 | ❌ | ✅ `state/disabled` 标志 |
+| **属主对齐** | **只查顶层目录**(快,有盲区) | **遍历每个条目,user/group 都纠** |
+| 大目录(playwright) | 递归 `chown -R` | 仅顶层(内部 644/755,无需递归) |
+| I/O 优先级 | 无 | `ionice -c3` + `nice -n19` |
+| 跨文件系统 | 会跨 | `find -xdev` 不跨 |
+
+**怎么选**
+
+- **新部署** → **V2**(默认)
+- **就要最简逻辑** → V1
+- **迁移记忆后出现"属主不对、应用读写失败"** → 必须 **V2**(V1 只查顶层,修不到子文件)
+
+**安装产物**
+
+```
+<安装目录>/watchdog/watchdog-host.sh   # 看门狗本体(选中的版本)
+<安装目录>/uid-align.sh                # 挂载目录属主对齐
+<安装目录>/time-sync.sh                # 容器时区/时间校准
+/etc/cron.d/neko-watchdog              # */5 * * * * root <本体>, 内含 BASE_DIR
+```
+
+> ⚠️ `watchdog/` 根目录下的**上游官方版**与 `v1/`、`v2/` 是**两套独立实现,不要同时安装**
+> —— 它们都会 `docker restart neko`,同时装会互相打架。
+
+详见 [`watchdog/README.md`](watchdog/README.md)。
 
 ---
 
@@ -126,9 +179,16 @@ docker compose down          # 不会卸载看门狗 cron
 # 获取实例凭证(在容器里生成访问 key)
 docker compose exec --user neko -w /app neko-main uv run python -m utils.instance_access
 
-# 卸载看门狗
+# 卸载看门狗(cron 文件是公共的, 先删它)
 sudo rm -f /etc/cron.d/neko-watchdog
+
+# 上游官方版(装在 /opt/neko)
 sudo rm -rf /opt/neko
+
+# V1/V2(装在安装目录, 把 <安装目录> 换成实际路径)
+rm -f <安装目录>/watchdog/watchdog-host.sh \
+      <安装目录>/uid-align.sh \
+      <安装目录>/time-sync.sh
 ```
 
 ---
@@ -147,6 +207,7 @@ sudo rm -rf /opt/neko
 
 - 官方 Docker 部署: [`README_Docker.md`](README_Docker.md)
 - 配置项参考: [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)
+- **宿主机看门狗 V1/V2 对照与选型**: [`watchdog/README.md`](watchdog/README.md)
 - 官方文档库: [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 
 ---
