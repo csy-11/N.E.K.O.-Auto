@@ -1,13 +1,14 @@
 # N.E.K.O.-Auto
 
-N.E.K.O. 服务的**自动部署方案**(含小白友好一键脚本)。
+碳基生物,欢迎喵~ 这里是 N.E.K.O. 服务的**自动部署方案**(带小白友好的一键脚本)。
 
-这套仓库把 N.E.K.O. 官方 `docker/` 目录的内容整理出来,并提供一个
-**`install.sh` 全自动部署脚本**:通过 curl 拉取本仓库文件 → 交互式配置 →
-安装 Docker/ZRAM/CrowdSec/看门狗 → 拉起服务。适合低配云服务器(Ubuntu 系)。
+本喵把官方 `docker/` 目录那套东西整理好,再配一个
+**`install.sh` 全自动部署脚本**:curl 拉文件 → 交互式配置 →
+装 Docker/ZRAM/CrowdSec/看门狗 → 把服务拉起来。低配云服务器(Ubuntu 系)也能用喵。
 
-> 本仓库为 `csy-11` 维护的个人/社区版。配置项与运行细节以官方
-> [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O) 为准。
+> 本仓库是 `csy-11` 维护的个人/社区版。配置项和运行细节以官方
+> [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O) 为准
+> —— 官方的规矩本喵可不敢乱改。
 
 ---
 
@@ -46,7 +47,7 @@ docker/ 方案(仓库根)
 
 ## ✨ 一键部署(推荐)
 
-小白友好。把下面命令粘到 Ubuntu 服务器的终端里回车即可。
+小白也能上。把下面命令粘到 Ubuntu 服务器的终端里,回车就行喵。
 
 ### 方式一:一行命令
 
@@ -67,7 +68,7 @@ sudo bash install.sh
 
 ## 🧭 脚本会做什么(分步)
 
-脚本**不会闷头就装**,开头会先问你几个问题:
+脚本**不会闷头就装** —— 开头本喵会先问碳基生物几个问题喵:
 
 ```
 是否需要开启 ZRAM 内存压缩?(推荐 Y)
@@ -76,7 +77,8 @@ sudo bash install.sh
   └─ 选哪个版本? 1) V2 合并版(推荐)  2) V1 第一代  3) 不装
 ```
 
-然后按 `[1/5]`~`[5/5]` 分步执行,每步都有进度日志(成功标 ✅,失败给修复提示):
+然后按 `[1/5]`~`[5/5]` 一步步来,每步都有进度日志(成功标 ✅,失败给修复提示,
+本喵不会把碳基生物晾在半路上):
 
 | 步骤 | 动作 |
 |---|---|
@@ -86,16 +88,17 @@ sudo bash install.sh
 | `[4/5]` | 拉取配置 → 交互式填 API 提供商/Key/HTTPS/端口 → 生成 `.env` → `docker compose up` |
 | `[5/5]` | 按选择安装 CrowdSec 防爆破、宿主机看门狗(可选 V1/V2) |
 
-交互式配置会问:
+交互式配置本喵会问这些:
+
 - 核心 API 提供商(`qwen`/`openai`/`glm`/`step`/`free`)
 - 辅助 API 提供商(`qwen`/`openai`/`glm`/`step`/`silicon`/`grok`/`doubao`)
-- API Key(隐藏输入)
+- API Key(**隐藏输入**,本喵不会把它写进日志)
 - 是否用 HTTPS(域名/证书)
 - 各服务端口(默认 48911/48912/48913/48915)
 
 ---
 
-## ⚙️ 手动部署(不用脚本)
+## ⚙️ 手动部署(不想用脚本的话)
 
 ```bash
 # 1. 进入仓库根目录
@@ -122,7 +125,8 @@ sudo sh watchdog/install-watchdog.sh --host       # 上游官方版
 
 ## 🐕 宿主机看门狗(V1 / V2)
 
-`install.sh` 会让你二选一;选中的版本会**连同配套的 `uid-align` / `time-sync` 一起安装**。
+`install.sh` 会让碳基生物二选一;选中的版本会**连同配套的 `uid-align` / `time-sync`
+一起装上**。它们的活儿是:每 5 分钟看一次容器还活着没,卡死了就有限次数地拉一把喵。
 
 | | **V1 第一代** | **V2 合并版(推荐)** |
 |---|---|---|
@@ -138,13 +142,14 @@ sudo sh watchdog/install-watchdog.sh --host       # 上游官方版
 | I/O 优先级 | 无 | `ionice -c3` + `nice -n19` |
 | 跨文件系统 | 会跨 | `find -xdev` 不跨 |
 
-**怎么选**
+**怎么选?本喵的建议:**
 
-- **新部署** → **V2**(默认)
-- **就要最简逻辑** → V1
-- **迁移记忆后出现"属主不对、应用读写失败"** → 必须 **V2**(V1 只查顶层,修不到子文件)
+- **新部署** → **V2**(默认)。稳、省 I/O、没有盲区,本喵比较放心。
+- **就要最简逻辑 / 兼容旧行为** → V1。
+- **迁移记忆后出现"属主不对、应用读写失败"** → **必须 V2**。V1 只看顶层目录,
+  修不到里面的子文件(这是它的盲区喵)。
 
-**安装产物**
+**装完长这样:**
 
 ```
 <安装目录>/watchdog/watchdog-host.sh   # 看门狗本体(选中的版本)
@@ -153,10 +158,10 @@ sudo sh watchdog/install-watchdog.sh --host       # 上游官方版
 /etc/cron.d/neko-watchdog              # */5 * * * * root <本体>, 内含 BASE_DIR
 ```
 
-> ⚠️ `watchdog/` 根目录下的**上游官方版**与 `v1/`、`v2/` 是**两套独立实现,不要同时安装**
-> —— 它们都会 `docker restart neko`,同时装会互相打架。
+> ⚠️ 本喵得提醒一句:`watchdog/` 根目录下的**上游官方版**和 `v1/`、`v2/` 是
+> **两套独立实现,不要同时装** —— 它们都会 `docker restart neko`,一起装会打架喵。
 
-详见 [`watchdog/README.md`](watchdog/README.md)。
+细节看 [`watchdog/README.md`](watchdog/README.md)。
 
 ---
 
@@ -195,9 +200,11 @@ rm -f <安装目录>/watchdog/watchdog-host.sh \
 
 ## 🔐 安全提醒
 
+本喵多嘴几句,都是为了碳基生物好喵:
+
 - 部署后优先在云安全组限制来源 IP(只放行你需要的入口)。
 - 远程尽量用 HTTPS/WSS:`NEKO_REQUIRE_HTTPS=1`;
-  纯 HTTP 会明文传输配对 key 与会话 Cookie。
+  纯 HTTP 会**明文**传输配对 key 与会话 Cookie。
 - `.env` 里有 API Key,不要提交进任何公共仓库(已建议加入 `.gitignore`)。
 - API Key 属于敏感信息,不要写进脚本、日志或截图。
 
@@ -215,4 +222,4 @@ rm -f <安装目录>/watchdog/watchdog-host.sh \
 ## LICENSE
 
 本仓库内容随官方 `Project-N-E-K-O/N.E.K.O` 一并开源(以官方声明为准)。
-`install.sh`(及其旧名转发器 `deploy.sh`)由本仓作者(csy-11)编写。
+`install.sh`(及其旧名转发器 `deploy.sh`)是本喵写的,哼,写得还不错吧。
