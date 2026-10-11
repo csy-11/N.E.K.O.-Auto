@@ -8,3 +8,6 @@ logs/
 
 # 本地部署目录
 neko-deploy/
+
+# 本地跑 .github/scripts/* 时生成的报告片段(CI 里只写进 job summary)
+reports/

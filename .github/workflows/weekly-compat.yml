@@ -1,0 +1,367 @@
+name: 每周兼容性检查
+
+# 为什么需要它:
+#   本仓库有一批文件是「逐字镜像」上游 Project-N-E-K-O/N.E.K.O 的 docker/ 目录
+#   (entrypoint.sh / docker-compose.yml / env.template / preflight.sh ...), 而
+#   install.sh 恰恰是把这些文件直接投喂到用户机器上的。上游一改, 我们这份就
+#   静默过时了 —— 没有任何本地信号会提醒。所以每周固定比一次。
+#   顺带守住自己的东西: 脚本语法与 ShellCheck、compose 能不能解析、
+#   仓库自带的两个回归测试还能不能过、安装脚本依赖的镜像 tag 是否还在。
+#
+# 失败时会自动开(或更新)一个带 compat-check 标签的 issue;
+# 全部恢复后会自动把它关掉, 所以 issue 列表里只会留下真实待办。
+#
+# 手动跑一次: Actions 页面 → 每周兼容性检查 → Run workflow。
+
+on:
+  schedule:
+    # 周日 19:23 UTC = 周一 03:23 北京时间。刻意避开整点: GitHub 的定时任务
+    # 在整点前后最堵, 排队延迟可能到十几分钟。
+    - cron: '23 19 * * 0'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      # 改检查逻辑本身、或改到被检查的文件时立刻跑, 不用等一周
+      - '.github/workflows/weekly-compat.yml'
+      - '.github/scripts/**'
+      - 'docker-compose.yml'
+      - 'env.template'
+      - 'install.sh'
+      - 'preflight.sh'
+      - 'watchdog/**'
+
+permissions:
+  contents: read
+
+# 定时任务撞上手动触发时不并发, 也不取消正在跑的(保留完整报告)
+concurrency:
+  group: weekly-compat
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: Project-N-E-K-O/N.E.K.O
+  UPSTREAM_REF: main
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. 脚本语法 + ShellCheck
+  # ---------------------------------------------------------------------------
+  lint:
+    name: 语法与 ShellCheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 shellcheck
+        run: |
+          command -v shellcheck >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq shellcheck
+          }
+          shellcheck --version
+
+      - name: 语法检查 (按 shebang 选 bash -n / sh -n)
+        run: |
+          set -euo pipefail
+          rc=0
+          while IFS= read -r f; do
+            shebang="$(head -n 1 "$f")"
+            case "$shebang" in
+              */sh) interp="sh" ;;
+              *)    interp="bash" ;;
+            esac
+            if "$interp" -n "$f"; then
+              printf '✅ %-34s %s -n\n' "$f" "$interp"
+            else
+              printf '❌ %-34s %s -n\n' "$f" "$interp"
+              rc=1
+            fi
+          done < <(git ls-files '*.sh')
+          echo "受检脚本: $(git ls-files '*.sh' | wc -l) 个"
+          exit "$rc"
+
+      - name: ShellCheck error 级(致命)
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.sh')
+          # severity=error 只留真会出问题的(未定义变量、语法级错误...)。
+          # 维护约定: 这一档必须常绿, 亮了就是真 bug。
+          shellcheck --severity=error --color=never --format=gcc "${files[@]}"
+          echo "✅ ${#files[@]} 个脚本无 error 级问题"
+
+      - name: ShellCheck warning 级(仅记录, 不判失败)
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.sh')
+          out="$(shellcheck --severity=warning --color=never --format=gcc "${files[@]}" 2>&1 || true)"
+          n="$(printf '%s' "$out" | grep -c . || true)"
+          {
+            echo "### ShellCheck warning 级(参考, 不判失败)"
+            echo
+            if [ "$n" -eq 0 ]; then
+              echo "无。"
+            else
+              echo "共 ${n} 行(含上游镜像文件, 不算本仓库的问题):"
+              echo
+              echo '```'
+              printf '%s\n' "$out" | head -80
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "warning 级: ${n} 行(已写入 job summary)"
+
+  # ---------------------------------------------------------------------------
+  # 2. compose 能不能解析 + 环境变量台账
+  # ---------------------------------------------------------------------------
+  compose:
+    name: Compose 与变量台账
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: docker compose 版本
+        run: docker compose version
+
+      - name: 校验 compose 各变量组合
+        run: |
+          set -euo pipefail
+          rc=0
+          check() {
+            local label="$1"; shift
+            if out="$(env "$@" docker compose -f docker-compose.yml config -q 2>&1)"; then
+              echo "✅ $label"
+            else
+              echo "❌ $label"
+              printf '%s\n' "$out" | sed 's/^/     /'
+              rc=1
+            fi
+          }
+          check "默认(标准版 latest)"                 NEKO_IMAGE_VERSION=latest
+          check "完整版 latest-full"                  NEKO_IMAGE_VERSION=latest-full
+          check "指定版本 0.8.0-standard"             NEKO_IMAGE_VERSION=0.8.0-standard
+          check "官方 GHCR 直连(不用加速源)"          NEKO_IMAGE=ghcr.io/project-n-e-k-o/n.e.k.o:latest
+          exit "$rc"
+
+      - name: 校验 .env 场景(模拟用户 cp env.template .env)
+        run: |
+          set -euo pipefail
+          # env.template 里是 NEKO_CORE_API_KEY=your-api-key-here 之类的占位值,
+          # 直接拿来解析, 能过就说明 .env 不会把 compose 弄崩。
+          cp env.template .env
+          docker compose -f docker-compose.yml config -q
+          echo "✅ 以 env.template 为 .env 时 compose 解析正常"
+          rm -f .env
+
+      - name: 渲染生效配置(存档 + job summary)
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          NEKO_IMAGE_VERSION=latest docker compose -f docker-compose.yml config \
+            > reports/compose-rendered.yml
+          {
+            echo "### 渲染后的配置(标准版)"
+            echo
+            echo '```yaml'
+            head -60 reports/compose-rendered.yml
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 环境变量台账
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          REPORT=reports/env-ledger.md bash .github/scripts/env-ledger.sh
+          cat reports/env-ledger.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传报告片段
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-compose
+          path: reports/
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # 3. 仓库自带的回归测试(需要 root, runner 有免密 sudo)
+  # ---------------------------------------------------------------------------
+  tests:
+    name: 回归测试 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # install.sh 走 apt 装 docker, 22.04 / 24.04 都是目标环境, 两个都测
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境信息
+        run: |
+          . /etc/os-release
+          echo "$PRETTY_NAME | $(uname -srm) | $(bash --version | head -n1)"
+
+      - name: preflight.sh 回归测试
+        run: sudo --preserve-env=PATH bash test-preflight.sh
+
+      - name: watchdog 回归测试
+        run: sudo --preserve-env=PATH bash watchdog/test-watchdog.sh
+
+  # ---------------------------------------------------------------------------
+  # 4. 上游漂移 + 镜像 tag 可用性
+  # ---------------------------------------------------------------------------
+  upstream:
+    name: 上游漂移与镜像可用性
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 上游 docker/ 漂移检测
+        id: drift
+        continue-on-error: true
+        run: |
+          mkdir -p reports
+          REPORT=reports/upstream-drift.md bash .github/scripts/upstream-drift.sh
+
+      - name: 镜像 tag 可用性
+        id: tags
+        continue-on-error: true
+        run: |
+          mkdir -p reports
+          REPORT=reports/image-tags.md bash .github/scripts/check-image-tags.sh
+
+      - name: 结论
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in reports/upstream-drift.md reports/image-tags.md; do
+            if [ -f "$f" ]; then
+              cat "$f" >> "$GITHUB_STEP_SUMMARY"
+              echo >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          echo "drift=${{ steps.drift.outcome }} tags=${{ steps.tags.outcome }}"
+          [ "${{ steps.drift.outcome }}" = success ] || exit 1
+          [ "${{ steps.tags.outcome }}" = success ] || exit 1
+
+      - name: 上传报告片段
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-upstream
+          path: reports/
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # 5. 汇总 + 开/关 issue
+  # ---------------------------------------------------------------------------
+  report:
+    name: 汇总与 issue
+    needs: [lint, compose, tests, upstream]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      R_LINT: ${{ needs.lint.result }}
+      R_COMPOSE: ${{ needs.compose.result }}
+      R_TESTS: ${{ needs.tests.result }}
+      R_UPSTREAM: ${{ needs.upstream.result }}
+    steps:
+      - name: 收集报告片段
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: report-*
+          merge-multiple: true
+          path: reports
+
+      - name: 汇总到 job summary
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          {
+            echo "## 每周兼容性检查结果"
+            echo
+            echo "| 检查项 | 结果 |"
+            echo "| --- | --- |"
+            echo "| 语法与 ShellCheck | ${R_LINT} |"
+            echo "| Compose 与变量台账 | ${R_COMPOSE} |"
+            echo "| 回归测试 | ${R_TESTS} |"
+            echo "| 上游漂移与镜像 | ${R_UPSTREAM} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for f in reports/*.md; do
+            { echo; cat "$f"; } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: 开/更新/关闭 issue
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          # label 先建出来, 后面的 list/create 才不会因为标签不存在而报错
+          gh label create compat-check --force \
+            --color 1D76DB --description "每周兼容性检查自动报告" >/dev/null
+
+          # 找出正在跟进的 issue(最多一个)
+          existing="$(gh issue list --label compat-check --state open \
+                        --limit 1 --json number --jq '.[0].number // empty')"
+
+          failed=0
+          for r in "$R_LINT" "$R_COMPOSE" "$R_TESTS" "$R_UPSTREAM"; do
+            [ "$r" = success ] || failed=1
+          done
+
+          if [ "$failed" -eq 0 ]; then
+            echo "✅ 全部通过"
+            if [ -n "$existing" ]; then
+              # 用 printf 拼多行, 别在 run: | 里写裸的多行字符串(缩进会破坏块标量)
+              gh issue comment "$existing" --body "$(printf '全绿了, 本喵自动关掉这条。\n\n运行: %s/%s/actions/runs/%s' \
+                "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")"
+              gh issue close "$existing"
+              echo "已关闭 issue #${existing}"
+            fi
+            exit 0
+          fi
+
+          body="$(mktemp)"
+          {
+            echo "每周兼容性检查没通过。"
+            echo
+            echo "| 检查项 | 结果 |"
+            echo "| --- | --- |"
+            echo "| 语法与 ShellCheck | \`${R_LINT}\` |"
+            echo "| Compose 与变量台账 | \`${R_COMPOSE}\` |"
+            echo "| 回归测试 | \`${R_TESTS}\` |"
+            echo "| 上游漂移与镜像 | \`${R_UPSTREAM}\` |"
+            echo
+            echo "运行日志: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            echo "触发: \`${GITHUB_EVENT_NAME}\` @ \`${GITHUB_SHA:0:7}\` ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+            echo
+            for f in reports/*.md; do
+              echo "---"
+              echo
+              cat "$f"
+              echo
+            done
+            echo "---"
+            echo
+            echo "<sub>这条 issue 由每周兼容性检查自动维护: 同一个问题只留一条, 全绿后自动关闭。</sub>"
+          } > "$body"
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file "$body"
+            echo "已更新 issue #${existing}"
+          else
+            title="[兼容性] $(date -u '+%Y-%m-%d') 检查未通过"
+            gh issue create --title "$title" --label compat-check --body-file "$body"
+          fi

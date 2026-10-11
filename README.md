@@ -28,19 +28,26 @@ docker/ 方案(仓库根)
 ├── README_Docker.md      # 官方 Docker 部署说明
 ├── CONFIG_REFERENCE.md   # 配置项参考
 ├── config/               # 配置示例(不挂载进容器)
-└── watchdog/             # 可选宿主机自愈看门狗(两种实现)
-    ├── README.md              # 两版对照表 + 选型建议
-    ├── watchdog.sh            # 上游官方版(独立实现)
-    ├── install-watchdog.sh    # 官方安装器(写 root cron)
-    ├── test-watchdog.sh       # 回归测试
-    ├── v1/                    # 第一代: 逻辑简单, 属主对齐仅查顶层
-    │   ├── watchdog.sh
-    │   ├── uid-align.sh
-    │   └── time-sync.sh
-    └── v2/                    # 合并版(推荐): 二代健壮性 + 完整属主对齐
-        ├── watchdog.sh
-        ├── uid-align.sh
-        └── time-sync.sh
+├── watchdog/             # 可选宿主机自愈看门狗(两种实现)
+│   ├── README.md              # 两版对照表 + 选型建议
+│   ├── watchdog.sh            # 上游官方版(独立实现)
+│   ├── install-watchdog.sh    # 官方安装器(写 root cron)
+│   ├── test-watchdog.sh       # 回归测试
+│   ├── v1/                    # 第一代: 逻辑简单, 属主对齐仅查顶层
+│   │   ├── watchdog.sh
+│   │   ├── uid-align.sh
+│   │   └── time-sync.sh
+│   └── v2/                    # 合并版(推荐): 二代健壮性 + 完整属主对齐
+│       ├── watchdog.sh
+│       ├── uid-align.sh
+│       └── time-sync.sh
+├── .github/              # 自动化(每周兼容性检查)
+│   ├── workflows/
+│   │   └── weekly-compat.yml
+│   └── scripts/
+│       ├── upstream-drift.sh    # 与上游 docker/ 逐字节比对
+│       ├── check-image-tags.sh  # GHCR tag 是否还在
+│       └── env-ledger.sh        # compose 环境变量有没有写进文档
 ```
 
 ---
@@ -232,11 +239,45 @@ sudo cscli console status      # 查看绑定状态
 
 ---
 
+## 🩺 每周兼容性检查(自动)
+
+本仓库有一批文件是**逐字镜像**上游 `docker/` 目录的(`entrypoint.sh`、
+`docker-compose.yml`、`env.template`、`preflight.sh` …),而 `install.sh` 恰恰是把
+它们**直接投喂**到碳基生物机器上的。上游一改,这份镜像就会**静默过时** ——
+本地没有任何信号会提醒你。所以让它每周自己查一次喵。
+
+`.github/workflows/weekly-compat.yml` 每周一 03:23(北京时间)跑四件事:
+
+| 检查项 | 查什么 | 亮了意味着 |
+| --- | --- | --- |
+| 语法与 ShellCheck | 全部 `*.sh` 的 `bash -n`/`sh -n`,加 shellcheck **error 级** | 有脚本真的写坏了 |
+| Compose 与变量台账 | compose 在多种变量组合下能否解析;新增的环境变量有没有写进文档 | 用户照着文档配会踩空 |
+| 回归测试 | `test-preflight.sh` 与 `watchdog/test-watchdog.sh`,Ubuntu 22.04 + 24.04 各跑一遍 | 数据目录预检或看门狗坏了 |
+| 上游漂移与镜像 | 镜像文件与上游逐字节比对;GHCR 的 `latest`/`latest-full` 是否还在 | 上游改了实现或删了 tag,这份已经过期 |
+
+**挂了会自动开一条带 `compat-check` 标签的 issue**,同一个问题只更新这一条,
+全绿之后自动关掉 —— 所以 issue 列表里只会剩下真实待办。
+
+想手动跑:Actions 页面 → 「每周兼容性检查」→ Run workflow。也可以本地单独跑:
+
+```bash
+bash .github/scripts/upstream-drift.sh     # 上游漂移(出报告, 有漂移则退出码 1)
+bash .github/scripts/check-image-tags.sh   # GHCR tag 可用性
+bash .github/scripts/env-ledger.sh         # compose 环境变量台账
+```
+
+> 漂移检测比的是**已提交内容**(`HEAD`),不是工作区。本地改了还没 `git commit`
+> 会显示漂移,那是正常的。它靠一次浅层 `--filter=blob:none` 的 fetch 取上游,
+> 不碰 GitHub API,所以没有限流问题。
+
+---
+
 ## 📄 关联文档
 
 - 官方 Docker 部署: [`README_Docker.md`](README_Docker.md)
 - 配置项参考: [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)
 - **宿主机看门狗 V1/V2 对照与选型**: [`watchdog/README.md`](watchdog/README.md)
+- **每周兼容性检查**: [`.github/workflows/weekly-compat.yml`](.github/workflows/weekly-compat.yml)
 - 官方文档库: [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 
 ---
