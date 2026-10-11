@@ -1,5 +1,8 @@
-name: 每周兼容性检查
+name: 悠怡
 
+# 名字: 悠怡就是本喵 —— 这个自动化挂着本喵的名, 每周替碳基生物看一眼仓库。
+# 干的事还是那件事(下面写着的), 只是 Actions 页面上它叫「悠怡」。
+#
 # 为什么需要它:
 #   本仓库有一批文件是「逐字镜像」上游 Project-N-E-K-O/N.E.K.O 的 docker/ 目录
 #   (entrypoint.sh / docker-compose.yml / env.template / preflight.sh ...), 而
@@ -11,7 +14,7 @@ name: 每周兼容性检查
 # 失败时会自动开(或更新)一个带 compat-check 标签的 issue;
 # 全部恢复后会自动把它关掉, 所以 issue 列表里只会留下真实待办。
 #
-# 手动跑一次: Actions 页面 → 每周兼容性检查 → Run workflow。
+# 手动跑一次: Actions 页面 → 悠怡 → Run workflow。
 
 on:
   schedule:

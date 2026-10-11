@@ -41,9 +41,9 @@ docker/ 方案(仓库根)
 │       ├── watchdog.sh
 │       ├── uid-align.sh
 │       └── time-sync.sh
-├── .github/              # 自动化(每周兼容性检查)
+├── .github/              # 自动化: 悠怡(每周兼容性检查)
 │   ├── workflows/
-│   │   └── weekly-compat.yml
+│   │   └── weekly-compat.yml   # → Actions 里显示为「悠怡」
 │   └── scripts/
 │       ├── upstream-drift.sh    # 与上游 docker/ 逐字节比对
 │       ├── open-drift-pr.sh     # 漂移时照抄上游并开/更新 PR
@@ -355,7 +355,7 @@ sudo cscli console status      # 查看绑定状态
 
 ---
 
-## 🩺 每周兼容性检查(自动)
+## 🩺 悠怡 —— 每周兼容性检查(自动)
 
 本仓库有一批文件是**逐字镜像**上游 `docker/` 目录的(`entrypoint.sh`、
 `docker-compose.yml`、`env.template`、`preflight.sh` …),而 `install.sh` 恰恰是把
@@ -402,7 +402,7 @@ MATERIALIZE_DIR=/tmp/up-new bash .github/scripts/upstream-drift.sh   # 退出码
 MATERIALIZE_DIR=/tmp/up-new bash .github/scripts/open-drift-pr.sh
 ```
 
-想手动跑:Actions 页面 → 「每周兼容性检查」→ Run workflow。也可以本地单独跑:
+想手动跑:Actions 页面 → 「悠怡」→ Run workflow。也可以本地单独跑:
 
 ```bash
 bash .github/scripts/upstream-drift.sh     # 上游漂移(0=干净 1=可自动修 2=路径变了 3=拉不到上游)
@@ -422,7 +422,7 @@ bash .github/scripts/open-drift-pr.sh      # 照抄上游并开/更新 PR(需要
 - 官方 Docker 部署: [`README_Docker.md`](README_Docker.md)
 - 配置项参考: [`CONFIG_REFERENCE.md`](CONFIG_REFERENCE.md)
 - **宿主机看门狗 V1/V2 对照与选型**: [`watchdog/README.md`](watchdog/README.md)
-- **每周兼容性检查**: [`.github/workflows/weekly-compat.yml`](.github/workflows/weekly-compat.yml)
+- **悠怡(每周兼容性检查)**: [`.github/workflows/weekly-compat.yml`](.github/workflows/weekly-compat.yml)
 - 官方文档库: [Project-N-E-K-O/N.E.K.O](https://github.com/Project-N-E-K-O/N.E.K.O)
 
 ---
