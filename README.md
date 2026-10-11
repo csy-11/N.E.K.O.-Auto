@@ -46,6 +46,7 @@ docker/ 方案(仓库根)
 │   │   └── weekly-compat.yml
 │   └── scripts/
 │       ├── upstream-drift.sh    # 与上游 docker/ 逐字节比对
+│       ├── open-drift-pr.sh     # 漂移时照抄上游并开/更新 PR
 │       ├── check-image-tags.sh  # GHCR tag 是否还在
 │       └── env-ledger.sh        # compose 环境变量有没有写进文档
 ```
@@ -246,7 +247,7 @@ sudo cscli console status      # 查看绑定状态
 它们**直接投喂**到碳基生物机器上的。上游一改,这份镜像就会**静默过时** ——
 本地没有任何信号会提醒你。所以让它每周自己查一次喵。
 
-`.github/workflows/weekly-compat.yml` 每周一 03:23(北京时间)跑四件事:
+`.github/workflows/weekly-compat.yml` 每周一 03:23(北京时间)跑五件事:
 
 | 检查项 | 查什么 | 亮了意味着 |
 | --- | --- | --- |
@@ -254,16 +255,38 @@ sudo cscli console status      # 查看绑定状态
 | Compose 与变量台账 | compose 在多种变量组合下能否解析;新增的环境变量有没有写进文档 | 用户照着文档配会踩空 |
 | 回归测试 | `test-preflight.sh` 与 `watchdog/test-watchdog.sh`,Ubuntu 22.04 + 24.04 各跑一遍 | 数据目录预检或看门狗坏了 |
 | 上游漂移与镜像 | 镜像文件与上游逐字节比对;GHCR 的 `latest`/`latest-full` 是否还在 | 上游改了实现或删了 tag,这份已经过期 |
+| 自动修复 PR | 漂移时**照抄上游**开一条 PR(见下) | 有东西等你 merge |
 
-**挂了会自动开一条带 `compat-check` 标签的 issue**,同一个问题只更新这一条,
-全绿之后自动关掉 —— 所以 issue 列表里只会剩下真实待办。
+### 漂移了会怎样?→ 自动给你开好一条 PR
+
+上游漂移的正确修法几乎总是「**照抄上游**」——那 13 个文件本来就是逐字镜像过来的。
+所以 CI 发现漂移时不再只是喊一声,而是直接把活干掉:
+
+1. 把上游新版本覆盖到本地同名文件
+2. 推到固定分支 `compat/upstream-drift`(所以**同时只有一条 PR**,重跑是覆盖更新,不刷屏)
+3. 开一条 PR,描述里带**逐文件增删行数 + 完整 diff**,还有一份合并前确认清单
+
+**只做「照抄」,不做任何适配,而且绝不自动合并** —— 上游要是引入了新的必填挂载或
+环境变量,PR 里的清单会提醒你顺带改 `install.sh`。
+
+> 分工是这样的:**能自动修的走 PR,修不了的才走 issue。**
+> 上游把某个文件删了/改了路径(照抄不了)、镜像 tag 没了、回归测试挂了 ——
+> 这些会开一条带 `compat-check` 的 issue,同一个问题只更新一条,全绿后自动关掉。
+> 所以 **issue 列表里只会剩下真正需要人工判断的事**。
+
+```bash
+# 本地也能复现这一步(会真的建分支+提交, 建议在沙箱 clone 里跑)
+MATERIALIZE_DIR=/tmp/up-new bash .github/scripts/upstream-drift.sh   # 退出码 1 = 可自动修
+MATERIALIZE_DIR=/tmp/up-new bash .github/scripts/open-drift-pr.sh
+```
 
 想手动跑:Actions 页面 → 「每周兼容性检查」→ Run workflow。也可以本地单独跑:
 
 ```bash
-bash .github/scripts/upstream-drift.sh     # 上游漂移(出报告, 有漂移则退出码 1)
+bash .github/scripts/upstream-drift.sh     # 上游漂移(0=干净 1=可自动修 2=路径变了 3=拉不到上游)
 bash .github/scripts/check-image-tags.sh   # GHCR tag 可用性
 bash .github/scripts/env-ledger.sh         # compose 环境变量台账
+bash .github/scripts/open-drift-pr.sh      # 照抄上游并开/更新 PR(需要 MATERIALIZE_DIR)
 ```
 
 > 漂移检测比的是**已提交内容**(`HEAD`),不是工作区。本地改了还没 `git commit`

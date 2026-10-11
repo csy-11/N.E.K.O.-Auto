@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# 自动开漂移修复 PR —— 把 upstream-drift.sh 落盘的上游版本照抄进本仓库, 建分支, 提交,
+# 推上去, 然后开(或更新)一个 PR。
+#
+# 设计取舍:
+#   · 分支名固定为 compat/upstream-drift, 所以同时**只会有一条 PR**, 反复跑是覆盖
+#     更新而不是刷屏。每次都从当前 HEAD 重建分支, 相当于自动 rebase 到最新 main。
+#   · 只做「照抄上游」这一件事, 不做任何适配/改写。是否需要连带改 install.sh 由人判断,
+#     所以清单里明确列出来, 并且**绝不自动合并**。
+#   · 上游把某个文件删了/改名了(exit 2)时不会走到这里 —— 那种照抄不了, 得人工。
+#
+# 环境变量:
+#   MATERIALIZE_DIR  必需。upstream-drift.sh 写出的上游新版本目录(含 .meta/)
+#   DRIFT_REPORT     默认 upstream-drift.md   漂移报告, 全文塞进 PR 描述
+#   BRANCH           默认 compat/upstream-drift
+#   BASE_BRANCH      默认 main
+#   PR_TITLE_PREFIX  默认 "[兼容性] 同步上游 docker/ 变更"
+#   GH_TOKEN / GITHUB_TOKEN  开 PR 用(gh 自己认这两个)
+#   PR_URL_FILE      可选。把最终的 PR URL 写一行到这个文件, 供 workflow 拿去
+#                    写 summary / 抑制重复的 issue。
+#
+# 退出码: 0 = 已开/已更新 PR, 或本来就没变化; 非 0 = 出错(需要人看)
+set -euo pipefail
+
+MATERIALIZE_DIR="${MATERIALIZE_DIR:?需要 MATERIALIZE_DIR}"
+DRIFT_REPORT="${DRIFT_REPORT:-upstream-drift.md}"
+BRANCH="${BRANCH:-compat/upstream-drift}"
+BASE_BRANCH="${BASE_BRANCH:-main}"
+PR_TITLE_PREFIX="${PR_TITLE_PREFIX:-[兼容性] 同步上游 docker/ 变更}"
+PR_URL_FILE="${PR_URL_FILE:-}"
+
+meta="$MATERIALIZE_DIR/.meta"
+[ -d "$meta" ] || { echo "找不到 $meta —— 请先用 MATERIALIZE_DIR 跑 upstream-drift.sh" >&2; exit 1; }
+[ -f "$meta/files" ] || { echo "找不到 $meta/files" >&2; exit 1; }
+
+mapfile -t files < <(grep -v '^[[:space:]]*$' "$meta/files" || true)
+if [ "${#files[@]}" -eq 0 ]; then
+    echo "没有内容漂移的文件, 无需开 PR。"
+    exit 0
+fi
+
+up_commit="$(cat "$meta/upstream-commit" 2>/dev/null || echo unknown)"
+up_ref="$(cat "$meta/upstream-ref" 2>/dev/null || echo main)"
+up_short="${up_commit:0:10}"
+
+echo "漂移文件 ${#files[@]} 个, 上游 commit ${up_short}"
+
+# --- 建分支 + 照抄 -----------------------------------------------------------
+git config user.name  "github-actions[bot]"
+git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+git checkout -B "$BRANCH"
+
+for path in "${files[@]}"; do
+    src="$MATERIALIZE_DIR/$path"
+    [ -f "$src" ] || { echo "缺 $src" >&2; exit 1; }
+    mkdir -p "$(dirname -- "$path")"
+    cp -f "$src" "$path"
+    echo "  覆盖 $path"
+done
+
+git add -A
+
+if git diff --cached --quiet; then
+    echo "工作区与本分支已有内容一致, 无需提交。"
+    exit 0
+fi
+
+# 每文件增删行数, 用来在 PR 里给个概览
+stat_md="$(git diff --cached --numstat | awk -F'\t' '
+    { printf "| `%s` | +%s | -%s |\n", $3, $1, $2 }')"
+
+git commit -q -m "chore(compat): 同步上游 docker/ 变更 (${up_short})" \
+    -m "$(printf '照抄上游 Project-N-E-K-O/N.E.K.O@%s 的以下文件:\n\n%s\n' \
+        "$up_ref" "$(printf '  - %s\n' "${files[@]}")")"
+
+echo "已提交: $(git log -1 --format='%h %s')"
+
+# 固定分支 + force: 保证同时只有一条 PR, 且总是基于最新 main
+git push --force --quiet origin "$BRANCH"
+echo "已推送分支 $BRANCH"
+
+# --- PR 描述 -----------------------------------------------------------------
+body="$(mktemp)"
+{
+    echo "## 这是什么"
+    echo
+    echo "每周兼容性检查发现本仓库有 **${#files[@]}** 个文件落后于上游"
+    echo "\`Project-N-E-K-O/N.E.K.O@${up_ref}\`(commit \`${up_short}\`)。"
+    echo
+    echo "**这个 PR 只做了一件事:把它们照抄成上游版本。** 没有任何适配或改写。"
+    echo
+    echo "| 文件 | 新增 | 删除 |"
+    echo "| --- | --- | --- |"
+    printf '%s\n' "$stat_md"
+    echo
+    echo "> 由 CI 自动生成并 \`--force\` 推送,分支固定为 \`${BRANCH}\` ——"
+    echo "> 所以同一个问题只会有一条 PR,重新运行是覆盖更新,不会刷屏。"
+    echo "> **不会自动合并。**"
+    echo
+    echo "## 合并前请确认"
+    echo
+    echo "- [ ] \`install.sh\` 的 \`NEED_FILES\` 是否需要跟着增减(上游新增/删除文件时)"
+    echo "- [ ] \`docker-compose.yml\` / \`entrypoint.sh\` 是否引入新的**必填**挂载或环境变量,"
+    echo "      需要同步改 \`install.sh\` 的交互流程(否则用户装机时会踩空)"
+    echo "- [ ] 有没有**破坏性**变更需要写进 README 的升级说明"
+    echo
+    echo "有意偏离上游的文件(\`README.md\` \`watchdog/README.md\` \`install.sh\` \`watchdog/v{1,2}/*\`)"
+    echo "**不在**本次覆盖范围内。"
+    echo
+    if [ -f "$DRIFT_REPORT" ]; then
+        echo "## 详细报告"
+        echo
+        echo "<details><summary>展开(含逐文件 diff)</summary>"
+        echo
+        cat "$DRIFT_REPORT"
+        echo
+        echo "</details>"
+    fi
+    echo
+    echo "<sub>由 <code>.github/workflows/weekly-compat.yml</code> 的 <code>auto-pr</code> job 生成。</sub>"
+} >"$body"
+
+# --- 开 or 更新 ---------------------------------------------------------------
+num="$(gh pr list --head "$BRANCH" --state open --limit 1 --json number \
+        --jq '.[0].number // empty')"
+
+title="${PR_TITLE_PREFIX} (${up_short})"
+
+if [ -n "$num" ]; then
+    gh pr edit "$num" --title "$title" --body-file "$body"
+    echo "已更新 PR #${num}"
+    url="$(gh pr view "$num" --json url --jq .url)"
+    echo "$url"
+else
+    url="$(gh pr create --base "$BASE_BRANCH" --head "$BRANCH" \
+        --title "$title" --body-file "$body")"
+    echo "$url"
+fi
+rm -f "$body"
+
+if [ -n "$PR_URL_FILE" ]; then
+    printf '%s\n' "$url" >"$PR_URL_FILE"
+fi

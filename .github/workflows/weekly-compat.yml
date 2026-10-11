@@ -257,11 +257,89 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
-  # 5. 汇总 + 开/关 issue
+  # 5. 漂移时自动开修复 PR
+  #    只做「照抄上游」这一件事, 绝不自动合并。分支固定, 所以同时只有一条 PR。
+  #    刻意放在 upstream 之后: upstream 报红说明有东西要处理, 这个 job 负责把
+  #    「能自动修的那一类」直接变成一条待 merge 的 PR。
+  # ---------------------------------------------------------------------------
+  auto-pr:
+    name: 自动开漂移修复 PR
+    needs: [upstream]
+    if: always() && needs.upstream.result == 'failure'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write        # 推 compat/upstream-drift 分支
+      pull-requests: write   # 开/更新 PR
+    outputs:
+      pr_opened: ${{ steps.pr.outputs.opened || 'false' }}
+      pr_url: ${{ steps.pr.outputs.url || '' }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      BASE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 漂移检测(顺便把上游新版本落盘)
+        id: drift
+        run: |
+          set -uo pipefail
+          code=0
+          MATERIALIZE_DIR="$RUNNER_TEMP/upstream-new" \
+          REPORT="$RUNNER_TEMP/upstream-drift.md" \
+            bash .github/scripts/upstream-drift.sh || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          # 0=无漂移 1=内容漂移(可自动修) 2=上游改了路径 3=拉不到上游
+          echo "漂移检测退出码: $code"
+          if [ -f "$RUNNER_TEMP/upstream-drift.md" ]; then
+            { echo; cat "$RUNNER_TEMP/upstream-drift.md"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit 0
+
+      - name: 照抄上游并开/更新 PR
+        id: pr
+        if: steps.drift.outputs.code == '1'
+        run: |
+          set -euo pipefail
+          export PR_URL_FILE="$RUNNER_TEMP/pr-url.txt"
+          MATERIALIZE_DIR="$RUNNER_TEMP/upstream-new" \
+          DRIFT_REPORT="$RUNNER_TEMP/upstream-drift.md" \
+            bash .github/scripts/open-drift-pr.sh
+
+          url="$(cat "$PR_URL_FILE" 2>/dev/null || true)"
+          if [ -n "$url" ]; then
+            echo "opened=true" >> "$GITHUB_OUTPUT"
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+            {
+              echo
+              echo "### ✅ 已自动开好一条待 merge 的 PR"
+              echo
+              echo "$url"
+              echo
+              echo "本喵只做了「照抄上游」,没有做任何适配 —— 合并前请过一眼 PR 里的清单。"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            # 理论上不会走到: 漂移报告说不同, 但工作区已是上游内容
+            echo "opened=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::漂移可自动修, 但没有产生任何文件变化, 未开 PR。"
+          fi
+
+      - name: 无法自动修时说明原因
+        if: steps.drift.outputs.code != '1'
+        run: |
+          case "${{ steps.drift.outputs.code }}" in
+            0) echo "::notice::本次没有内容漂移, 不需要开 PR。" ;;
+            2) echo "::error::上游删掉或改了某些文件的路径 —— 照抄不了, 必须人工判断(见上面的报告)。" ;;
+            *) echo "::error::拉不到上游仓库, 无法生成 PR。" ;;
+          esac
+
+  # ---------------------------------------------------------------------------
+  # 6. 汇总 + 开/关 issue
   # ---------------------------------------------------------------------------
   report:
     name: 汇总与 issue
-    needs: [lint, compose, tests, upstream]
+    needs: [lint, compose, tests, upstream, auto-pr]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -275,6 +353,9 @@ jobs:
       R_COMPOSE: ${{ needs.compose.result }}
       R_TESTS: ${{ needs.tests.result }}
       R_UPSTREAM: ${{ needs.upstream.result }}
+      R_AUTOPR: ${{ needs.auto-pr.result }}
+      PR_OPENED: ${{ needs.auto-pr.outputs.pr_opened || 'false' }}
+      PR_URL: ${{ needs.auto-pr.outputs.pr_url || '' }}
     steps:
       - name: 收集报告片段
         continue-on-error: true
@@ -297,6 +378,12 @@ jobs:
             echo "| Compose 与变量台账 | ${R_COMPOSE} |"
             echo "| 回归测试 | ${R_TESTS} |"
             echo "| 上游漂移与镜像 | ${R_UPSTREAM} |"
+            echo "| 自动修复 PR | ${R_AUTOPR} |"
+            if [ "$PR_OPENED" = true ]; then
+              echo
+              echo "漂移已自动开成 PR: ${PR_URL}"
+              echo "「能自动修的」走 PR,「修不了的」才走 issue —— 所以这条 PR 就是本次的待办。"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
           for f in reports/*.md; do
             { echo; cat "$f"; } >> "$GITHUB_STEP_SUMMARY"
@@ -315,9 +402,21 @@ jobs:
           existing="$(gh issue list --label compat-check --state open \
                         --limit 1 --json number --jq '.[0].number // empty')"
 
+          # 能自动修的情况不另开 issue: 待办就是那条 PR, 再开一条 issue 只是重复通知。
+          # (如果之前因为别的原因已经开着 issue, 就在里面指个路, 别重复贴一遍报告)
+          if [ "$PR_OPENED" = true ]; then
+            echo "✅ 漂移已自动开成 PR, 本次不新建 issue"
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "$(printf '这次的上游漂移已经自动开成 PR, 直接 review 那个就行:\n\n%s\n\n运行: %s/%s/actions/runs/%s' \
+                "$PR_URL" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")"
+              echo "已在 issue #${existing} 留言指向 PR"
+            fi
+            exit 0
+          fi
+
           failed=0
-          for r in "$R_LINT" "$R_COMPOSE" "$R_TESTS" "$R_UPSTREAM"; do
-            [ "$r" = success ] || failed=1
+          for r in "$R_LINT" "$R_COMPOSE" "$R_TESTS" "$R_UPSTREAM" "$R_AUTOPR"; do
+            [ "$r" = success ] || [ "$r" = skipped ] || failed=1
           done
 
           if [ "$failed" -eq 0 ]; then
@@ -342,6 +441,7 @@ jobs:
             echo "| Compose 与变量台账 | \`${R_COMPOSE}\` |"
             echo "| 回归测试 | \`${R_TESTS}\` |"
             echo "| 上游漂移与镜像 | \`${R_UPSTREAM}\` |"
+            echo "| 自动修复 PR | \`${R_AUTOPR}\` |"
             echo
             echo "运行日志: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo
@@ -356,6 +456,7 @@ jobs:
             echo "---"
             echo
             echo "<sub>这条 issue 由每周兼容性检查自动维护: 同一个问题只留一条, 全绿后自动关闭。</sub>"
+            echo "上游漂移能自动修时会走 PR(不再开 issue); 这条 issue 只用来装「自动修不了」的问题。"
           } > "$body"
 
           if [ -n "$existing" ]; then
