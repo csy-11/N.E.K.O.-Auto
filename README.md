@@ -206,6 +206,121 @@ rm -f <安装目录>/watchdog/watchdog-host.sh \
 
 ---
 
+## 🐳 镜像源:怎么测、怎么换
+
+`install.sh` 会先探一圈 GHCR 加速源,挑一个通的写进 `.env` 的 `NEKO_IMAGE`。
+但**镜像源是会抽风的**,所以本喵把探测命令摊开 —— 你自己随时能查喵。
+
+候选源(`install.sh` 里的 `GHCR_MIRRORS`):
+
+| 源 | 备注 |
+| --- | --- |
+| `docker.gh-proxy.org/ghcr.io` | gh-proxy |
+| `docker.m.daocloud.io/ghcr.io` | DaoCloud |
+| `docker.1ms.run/ghcr.io` | 1ms.run |
+| `ghcr.nju.edu.cn` | 南京大学镜像 |
+| `ghcr.io` | 官方直连(国内基本拉不动) |
+
+### 一、一条命令测完所有源
+
+```bash
+for m in docker.gh-proxy.org/ghcr.io \
+         docker.m.daocloud.io/ghcr.io \
+         docker.1ms.run/ghcr.io \
+         ghcr.nju.edu.cn; do
+  printf '%-34s ' "$m"
+  curl -sSL -o /dev/null -w '%{http_code}\n' --max-time 8 \
+    "https://$m/v2/project-n-e-k-o/n.e.k.o/manifests/latest"
+done
+```
+
+`install.sh` 走的就是这一口径:路径是 `v2/<镜像路径>/manifests/<tag>`,把所有候选都测完再挑。
+
+| 返回 | 含义 | 能用吗 |
+| --- | --- | --- |
+| `200` | 直接可用 | ✅ 最好 |
+| `401` | 活着,只是要匿名 token;`docker pull` 会自己换 | ✅ 可用 |
+| `403` | 限流 / 拒绝 | ❌ |
+| `404` | 路径或 tag 不对(源可能改了转发规则) | ❌ |
+| `502` | 源自己的网关挂了 | ❌ |
+| `000` | 连不上(DNS / 超时) | ❌ |
+
+把末尾的 `latest` 换成 `latest-full` 或某个版本号,就能测那个 tag。
+
+### 二、问官方 GHCR(权威判定)
+
+加速源说的是"我能不能转发",下面这两条是直接问官方 registry —— **想知道某个 tag 到底存不存在,以它为准**。
+
+```bash
+# 1) 拿匿名 pull token(不用 python3, 服务器上一定有 sed)
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:project-n-e-k-o/n.e.k.o:pull&service=ghcr.io" \
+        | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+
+# 2) 这个 tag 在不在(HEAD, 不下载镜像本体)
+curl -sI -H "Authorization: Bearer $TOKEN" \
+  -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json' \
+  https://ghcr.io/v2/project-n-e-k-o/n.e.k.o/manifests/latest-full \
+  | grep -iE '^HTTP/|^docker-content-digest'
+
+# 3) 列出所有 tag(官方分页默认只给 100 个, 所以要 n=1000)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://ghcr.io/v2/project-n-e-k-o/n.e.k.o/tags/list?n=1000" \
+  | sed -n 's/.*"tags":\[\(.*\)\]}*/\1/p' | tr ',' '\n' | tr -d '"'
+```
+
+第 2 条返回 `200` 加一行 `docker-content-digest` 就是有;`404` 就是没这个 tag。
+
+那串 digest 是镜像内容的指纹 —— **想确认上游有没有偷偷重新构建过,比这个值就行**:
+
+```
+latest      sha256:359fb93a0119a69b58278bf08bb403ede35e0b6c9bf32bc44f762de4774263ae
+latest-full sha256:66fd19a7620d985e3ff50dc8d964058be2871d942500a21bc71c23200da48340
+```
+
+### 三、拉镜像 / 手动换源
+
+```bash
+# 标准版(~1.5GB, 首次启动时下载 Chromium)
+docker pull ghcr.nju.edu.cn/project-n-e-k-o/n.e.k.o:latest
+
+# 完整版(~2.5GB, 自带 Chromium, 开箱即用)
+docker pull ghcr.nju.edu.cn/project-n-e-k-o/n.e.k.o:latest-full
+```
+
+脚本生成的 `.env` 里已经替你选好一个通的源了。想手动换,改 `NEKO_IMAGE` 这一行:
+
+```bash
+# .env
+NEKO_IMAGE=ghcr.nju.edu.cn/project-n-e-k-o/n.e.k.o:latest-full
+```
+
+```bash
+docker compose up -d     # 生效
+```
+
+> ⚠️ **只改 `NEKO_IMAGE_VERSION` 是没用的。** compose 里的写法是
+> `${NEKO_IMAGE:-<默认源>/...:${NEKO_IMAGE_VERSION:-latest}}` —— 也就是
+> `NEKO_IMAGE` 一旦有值(脚本一定会写),`NEKO_IMAGE_VERSION` 就**完全被忽略**。
+> 换版本请连着 `NEKO_IMAGE` 结尾的 tag 一起改。
+
+### 四、两个坑
+
+**1. 镜像源状态天天变。** 本喵写这段的时候:`docker.gh-proxy.org` 连不上(`000`)、
+`docker.m.daocloud.io` 返回 `502`,只有 `ghcr.nju.edu.cn` 是 `200`。
+所以别把任何一个源当成"永远可用",跑第一节那条命令自己看。
+
+**2. IPv6 陷阱。** `ghcr.nju.edu.cn` 同时有 A 和 AAAA 记录,而 DNS 可能**优先返回 IPv6**。
+如果你的 VPS 能解析出 IPv6 但**没有可用的 IPv6 出口**,`curl` / `docker pull` 会一直卡到超时:
+
+```bash
+getent ahosts ghcr.nju.edu.cn | head -4        # 看看有没有返回 IPv6
+curl -6 -sI --max-time 5 https://ghcr.nju.edu.cn/v2/ || echo "IPv6 不通"
+```
+
+真连不上就换个源,或者在 `/etc/gai.conf` 里把 IPv4 的优先级提上来。
+
+---
+
 ## 🔐 安全提醒
 
 本喵多嘴几句,都是为了碳基生物好喵:
