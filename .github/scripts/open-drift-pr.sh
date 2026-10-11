@@ -15,6 +15,10 @@
 #   BRANCH           默认 compat/upstream-drift
 #   BASE_BRANCH      默认 main
 #   PR_TITLE_PREFIX  默认 "[兼容性] 同步上游 docker/ 变更"
+#   BOT_NAME         默认 悠怡       自动提交显示的作者名
+#   BOT_EMAIL        默认 youyi@neko-auto.invalid
+#                    必须是「查不到 GitHub 账号」的邮箱, 否则会被账号名覆盖
+#                    (详见下面 git config 那段的注释)
 #   GH_TOKEN / GITHUB_TOKEN  开 PR 用(gh 自己认这两个)
 #   PR_URL_FILE      可选。把最终的 PR URL 写一行到这个文件, 供 workflow 拿去
 #                    写 summary / 抑制重复的 issue。
@@ -46,8 +50,25 @@ up_short="${up_commit:0:10}"
 echo "漂移文件 ${#files[@]} 个, 上游 commit ${up_short}"
 
 # --- 建分支 + 照抄 -----------------------------------------------------------
-git config user.name  "github-actions[bot]"
-git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+# bot 身份。有两个坑, 别随手改回去:
+#
+#   1) GitHub **靠邮箱反查账号**, 然后拿账号名覆盖提交里写的名字 —— 所以光把
+#      user.name 改成想要的显示名是没用的。用 github-actions[bot] 那个邮箱
+#      (41898282+github-actions[bot]@users.noreply.github.com), 页面就显示
+#      github-actions[bot]; 用 <任意名>@users.noreply.github.com 还可能撞上
+#      一个真实用户, 把提交算到陌生人头上。
+#   2) 只有「邮箱查不到任何 GitHub 账号」时, GitHub 才会老老实实显示
+#      user.name。所以这里用一个 RFC 2606 保留的 .invalid 域 —— 它保证永远
+#      解析不到, 既不会误伤别人, 也不会被当成真实邮箱发信。
+#
+# 效果: 提交显示为「悠怡」+ 默认灰色头像, 不归属任何账号(这很诚实, 它就是机器)。
+# 注意: PR / issue / 评论的作者不受此影响 —— GitHub 对 GITHUB_TOKEN 创建的内容
+#       强制署名 github-actions[bot], 那个改不了(要改得上 GitHub App)。
+BOT_NAME="${BOT_NAME:-悠怡}"
+BOT_EMAIL="${BOT_EMAIL:-youyi@neko-auto.invalid}"
+
+git config user.name  "$BOT_NAME"
+git config user.email "$BOT_EMAIL"
 
 git checkout -B "$BRANCH"
 
