@@ -22,13 +22,23 @@ on:
   push:
     branches: [main]
     paths:
-      # 改检查逻辑本身、或改到被检查的文件时立刻跑, 不用等一周
+      # 改检查逻辑本身时立刻跑, 不用等一周
       - '.github/workflows/weekly-compat.yml'
       - '.github/scripts/**'
+      # 被检查的文件(镜像集合 + 本仓库自己的脚本)动过就要跑一遍。
+      # 这份清单要和 upstream-drift.sh 的 MIRRORED 数组对齐 ——
+      # 漏一个, 那个文件的改动就不会触发检查。
+      - 'CONFIG_REFERENCE.md'
+      - 'Dockerfile'
+      - 'Dockerfile.full'
+      - 'README_Docker.md'
+      - 'config/**'
       - 'docker-compose.yml'
+      - 'entrypoint.sh'
       - 'env.template'
       - 'install.sh'
       - 'preflight.sh'
+      - 'test-preflight.sh'
       - 'watchdog/**'
 
 permissions:
