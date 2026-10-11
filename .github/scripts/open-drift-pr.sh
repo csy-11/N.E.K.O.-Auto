@@ -126,19 +126,37 @@ num="$(gh pr list --head "$BRANCH" --state open --limit 1 --json number \
         --jq '.[0].number // empty')"
 
 title="${PR_TITLE_PREFIX} (${up_short})"
+url=""
 
 if [ -n "$num" ]; then
-    gh pr edit "$num" --title "$title" --body-file "$body"
+    url="$(gh pr edit "$num" --title "$title" --body-file "$body" >/dev/null && \
+           gh pr view "$num" --json url --jq .url)"
     echo "已更新 PR #${num}"
-    url="$(gh pr view "$num" --json url --jq .url)"
-    echo "$url"
 else
-    url="$(gh pr create --base "$BASE_BRANCH" --head "$BRANCH" \
-        --title "$title" --body-file "$body")"
-    echo "$url"
+    # 仓库若没勾选 Settings → Actions → General →
+    # 「Allow GitHub Actions to create and approve pull requests」,
+    # GITHUB_TOKEN 是开不了 PR 的(即使 workflow 声明了 pull-requests: write)。
+    # 这种情况不该把 CI 弄红 —— 退化成「给一条 compare 链接」, 同时让 report job
+    # 去开 issue(那里带着完整漂移报告), 用户照样有路子走。
+    if err="$(gh pr create --base "$BASE_BRANCH" --head "$BRANCH" \
+                --title "$title" --body-file "$body" 2>&1)"; then
+        url="$err"
+        echo "$url"
+    else
+        printf '%s\n' "$err" >&2
+        compare="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-owner/repo}/compare/${BASE_BRANCH}...${BRANCH}?expand=1"
+        echo
+        echo "::warning::自动开 PR 失败, 已退化成人工点击。分支已经推好了, 点这里就能建 PR: ${compare}"
+        if [[ "$err" == *"not permitted to create"* ]]; then
+            echo "::warning::原因是仓库没开启「Allow GitHub Actions to create and approve pull requests」"
+            echo "::warning::(Settings → Actions → General → Workflow permissions)。开启后这个 job 就能全自动开 PR。"
+        fi
+        echo
+        echo "分支 \`${BRANCH}\` 已推送, 待办仍由 issue 承接(见汇总 job)。"
+    fi
 fi
 rm -f "$body"
 
-if [ -n "$PR_URL_FILE" ]; then
+if [ -n "$PR_URL_FILE" ] && [ -n "$url" ]; then
     printf '%s\n' "$url" >"$PR_URL_FILE"
 fi
