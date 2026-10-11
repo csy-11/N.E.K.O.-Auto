@@ -274,6 +274,13 @@ sudo cscli console status      # 查看绑定状态
 > 这些会开一条带 `compat-check` 的 issue,同一个问题只更新一条,全绿后自动关掉。
 > 所以 **issue 列表里只会剩下真正需要人工判断的事**。
 
+> ⚠️ **本仓库必须开启** Settings → Actions → General → Workflow permissions →
+> **「Allow GitHub Actions to create and approve pull requests」**,否则 `GITHUB_TOKEN`
+> 无权建 PR(即使 workflow 里声明了 `pull-requests: write`),`gh` 会报
+> `GitHub Actions is not permitted to create or approve pull requests`。
+> 没开也不会炸:分支照样推好,CI 打印一条 compare 链接并改用 issue 承接待办
+> (脚本里有优雅降级,所以**不会**把运行弄红)。
+
 ```bash
 # 本地也能复现这一步(会真的建分支+提交, 建议在沙箱 clone 里跑)
 MATERIALIZE_DIR=/tmp/up-new bash .github/scripts/upstream-drift.sh   # 退出码 1 = 可自动修
