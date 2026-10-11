@@ -25,6 +25,9 @@ on:
       # 改检查逻辑本身时立刻跑, 不用等一周
       - '.github/workflows/weekly-compat.yml'
       - '.github/scripts/**'
+      # 任何 shell 脚本动过都要跑 —— lint 检查的是 git ls-files '*.sh',
+      # 只列 install.sh 之类会漏掉新增的脚本(新增一个坏脚本却没人管)
+      - '**/*.sh'
       # 被检查的文件(镜像集合 + 本仓库自己的脚本)动过就要跑一遍。
       # 这份清单要和 upstream-drift.sh 的 MIRRORED 数组对齐 ——
       # 漏一个, 那个文件的改动就不会触发检查。
@@ -36,8 +39,6 @@ on:
       - 'docker-compose.yml'
       - 'entrypoint.sh'
       - 'env.template'
-      - 'install.sh'
-      - 'preflight.sh'
       - 'test-preflight.sh'
       - 'watchdog/**'
 
